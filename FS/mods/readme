@@ -1,0 +1,15 @@
+HCore will create a sort of symlink between the modules descriptors and this folder
+Each module descriptor is represented by '.CMP'.
+
+Example:
+SL
+POINTS TO MODULE
+HCore.Modules.HInit.Init
+AT PACK
+HCore.Modules.HInit
+
+In this example, this file points to the module descriptor of the module "HCore.Modules.HInit.Init" that is inside the module "HCore.Modules.HInit".
+
+SL
+POINTS TO FILE
+/mods/HCore.Modules.HInit.Init.CMP

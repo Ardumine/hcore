@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\HCore.Modules.Base\HCore.Modules.Base.csproj" />
+    </ItemGroup>
+
+    <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+        <Exec Command="mkdir -p $(ProjectDir)/../FS/packs/$(AssemblyName)/" />
+        <Exec Command="cp -vr $(OutDir)/* $(ProjectDir)/../FS/packs/$(AssemblyName)/" />
+    </Target>
+
+    <ItemGroup>
+        <PackageReference Include="ReadLine" Version="2.0.1" />
+    </ItemGroup>
+</Project>
