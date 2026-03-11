@@ -1,6 +1,6 @@
 using HCore.Modules.Base;
 
-namespace HCore.Modules.TestDemo.Module2;
+namespace HCore.Packages.TestDemo.Module2;
 
 public class Module2Implement : BaseImplement, IModule2
 {

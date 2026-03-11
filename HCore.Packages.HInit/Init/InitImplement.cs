@@ -1,7 +1,7 @@
 using HCore.Modules.Base;
 using System.Text;
 
-namespace HCore.Modules.HInit.Init;
+namespace HCore.Packages.HInit.Init;
 
 public class InitImplement : BaseImplement, IInit
 {

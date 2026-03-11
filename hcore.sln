@@ -7,9 +7,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Main", "HCore.Main\HC
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Modules.Base", "HCore.Modules.Base\HCore.Modules.Base.csproj", "{3DB02EAC-F61C-46A1-A002-C3F070B2637F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Modules.HInit", "HCore.Modules.HInit\HCore.Modules.HInit.csproj", "{1E3BF053-6FE1-4F1E-8D43-F69C96115887}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Packages.HInit", "HCore.Packages.HInit\HCore.Packages.HInit.csproj", "{1E3BF053-6FE1-4F1E-8D43-F69C96115887}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Modules.TestDemo", "HCore.Modules.TestDemo\HCore.Modules.TestDemo.csproj", "{1CB1FC5A-22FA-4562-A162-9B21A2B42637}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Packages.TestDemo", "HCore.Packages.TestDemo\HCore.Packages.TestDemo.csproj", "{1CB1FC5A-22FA-4562-A162-9B21A2B42637}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Logyt", "Logyt\Logyt.csproj", "{347FA811-14A0-4E90-8681-F595CD8B29AD}"
 EndProject

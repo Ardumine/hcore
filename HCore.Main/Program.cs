@@ -26,7 +26,7 @@ internal static class Program
         Init();
 
         // Get the init module
-        var initModule = GetAndCreateInitModule(_loadedModuleDescriptors.FirstOrDefault(lmd => lmd.DeclaredDescriptor.Name == "HCore.Modules.HInit.Init")!);// "/mods/HCore.Modules.TestDemo.Module2"
+        var initModule = GetAndCreateInitModule(_loadedModuleDescriptors.FirstOrDefault(lmd => lmd.DeclaredDescriptor.Name == "HCore.Packages.HInit.Init")!);// "/mods/HCore.Modules.TestDemo.Module2"
         
         // Run init
         logyt.I("Running init...");
@@ -196,7 +196,7 @@ internal static class Program
         instance.AttachVfs(moduleVfs);
     }
 
-    private static IInitModule GetAndCreateInitModule(LoadedModuleDescriptor loadedModuleDescriptor)
+    private static IRunnable GetAndCreateInitModule(LoadedModuleDescriptor loadedModuleDescriptor)
     {
         // Get the module descriptor
         var modDesc = loadedModuleDescriptor.DeclaredDescriptor;
@@ -209,7 +209,7 @@ internal static class Program
 
         AttachModuleVfs(instance, loadedModuleDescriptor);
 
-        if (instance is not IInitModule initModule)
+        if (instance is not IRunnable initModule)
             throw new Exception($"Module {modDesc.ImplementType} is not an init module");
 
         return initModule;

@@ -1,10 +1,10 @@
 using HCore.Modules.Base;
 
-namespace HCore.Modules.TestDemo.Module2;
+namespace HCore.Packages.TestDemo.Module2;
 
 public class ModDescriptor : IModuleDescriptor
 {
-    public string Name => "HCore.Modules.TestDemo.Module2";
+    public string Name => "HCore.Packages.TestDemo.Module2";
 
     public string FriendlyName => "Demo module 2";
     public Type ImplementType => typeof(Module2Implement);

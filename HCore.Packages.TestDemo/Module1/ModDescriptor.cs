@@ -1,6 +1,6 @@
 using HCore.Modules.Base;
 
-namespace HCore.Modules.TestDemo.Module1;
+namespace HCore.Packages.TestDemo.Module1;
 
 public class ModDescriptor : IModuleDescriptor
 {

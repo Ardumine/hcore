@@ -3,7 +3,7 @@ namespace HCore.Modules.Base;
 /// <summary>
 /// The code to implement the functions for the module.
 /// </summary>
-public abstract class BaseImplement : IModuleInterface
+public abstract class BaseImplement : IModule
 {
 	public IModuleFileSystem Vfs { get; private set; } = EmptyModuleFileSystem.Instance;
 
