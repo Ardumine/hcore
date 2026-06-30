@@ -95,6 +95,14 @@ This is the **dynamic** path, and it's the planned next layer. It does not repla
 
 That gives the decoupling of message-passing systems (Erlang, Smalltalk, Objective-C) and the introspectable-substrate model of D-Bus / gRPC-reflection, while the typed `GetModuleInterface<T>` stays the ergonomic default. See *Future Work*.
 
+## "How does a module own child sub-modules (e.g. a USB controller owning its device ports)?"
+
+Decided: **approach D — the parent is a host for its own subtree.** A parent extends `ContainerImplement` and calls one verb, `SpawnChild<IUsbDevice>("device0", init)`; the kernel constructs the child, wires its `Vfs`/`Host`, runs `init` *before* publishing, places it at `/proc/usb/device0`, and records a **parent→child edge**. Destroying the parent **structurally reaps** the whole subtree — no author teardown code.
+
+Why D over the alternatives (host-managed flat keys / owned-and-served pull / returned handles): only D makes lifetime-coupling a *kernel guarantee* while keeping children real, stateful, and `/proc`-addressable — and it yields the *simplest* author code (one verb; the complexity lives in the kernel, paid once). The 2nd iteration (`Ardumine/kernel`) built the flat-keys-with-an-edge variant, and its own logs document the failures D removes (orphaned children, spawn-then-init, unenforced ownership).
+
+Note: `expose` (which members a module publishes) and `sub-modules` (child instances it owns) are kept strictly separate. Full spec, build plan, acceptance criteria, and the four-way debate: see **[MODULE_HIERARCHY.md](MODULE_HIERARCHY.md)**.
+
 ## Future work (designed, not yet built)
 
 Each is an additive layer, not a rewrite:
@@ -105,6 +113,7 @@ Each is an additive layer, not a rewrite:
 4. **Shell as its own module** — make the shell a separate module from the init process. Right now HInit *is* the init process (PID 1, `/proc/init`); the long-term idea is a minimal init that launches the shell as a distinct module.
 5. **`ctl` / `data` file invocation** — drive a module by writing to `/proc/<name>/ctl` (the Plan 9 model), making modules scriptable straight from the shell.
 6. **Out-of-process / remote modules** — would add a serialization layer; the typed proxy could then sit over a message transport unchanged.
+7. **Module hierarchy / sub-modules** — a parent owning child modules visible at `/proc/<parent>/<child>` with kernel-enforced cascade. **Decided: approach D** (`ContainerImplement` + `SpawnChild`); full spec in [MODULE_HIERARCHY.md](MODULE_HIERARCHY.md).
 
 ## Prior-art touchstones
 
