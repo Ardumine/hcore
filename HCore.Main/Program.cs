@@ -25,9 +25,17 @@ internal static class Program
         logyt.I("Starting...");
         Init();
 
-        // Get the init module
-        var initModule = GetAndCreateInitModule(_loadedModuleDescriptors.FirstOrDefault(lmd => lmd.DeclaredDescriptor.Name == "HCore.Packages.HInit.Init")!);// "/mods/HCore.Modules.TestDemo.Module2"
-        
+        // The module host knows every loaded module and brokers references
+        // between them. It is what a module talks to when it wants to call
+        // another module.
+        var host = new ModuleHost(_vfs, _vfsModuleProxyLock, _loadedModuleDescriptors);
+
+        // Expose the running modules as a live /proc tree (like Linux/Plan 9).
+        _vfs.Mount("/proc", new ProcFileSystem(host));
+
+        // The init module (PID 1) — the kernel spawns it explicitly, then runs it.
+        var initModule = host.Spawn<IRunnable>("HCore.Packages.HInit.Init", "init");
+
         // Run init
         logyt.I("Running init...");
         initModule.Run();
@@ -183,42 +191,5 @@ internal static class Program
 
 
 
-
-    private static BaseImplement? CreateModuleInstance(Type implementType)
-    {
-        return Activator.CreateInstance(implementType) as BaseImplement;
-    }
-
-    private static void AttachModuleVfs(BaseImplement instance, LoadedModuleDescriptor loadedModuleDescriptor)
-    {
-        var moduleWorkingDirectory = loadedModuleDescriptor.ParentModPack.ModPackInfo.Path;
-        var moduleVfs = new ModuleFileSystemProxy(_vfs, _vfsModuleProxyLock, moduleWorkingDirectory);
-        instance.AttachVfs(moduleVfs);
-    }
-
-    private static IRunnable GetAndCreateInitModule(LoadedModuleDescriptor loadedModuleDescriptor)
-    {
-        // Get the module descriptor
-        var modDesc = loadedModuleDescriptor.DeclaredDescriptor;
-
-        // Initiate an instance of the module
-        var instance = CreateModuleInstance(modDesc.ImplementType);
-
-        if (instance == null)
-            throw new Exception($"Could not create instance for {modDesc.ImplementType}");
-
-        AttachModuleVfs(instance, loadedModuleDescriptor);
-
-        if (instance is not IRunnable initModule)
-            throw new Exception($"Module {modDesc.ImplementType} is not an init module");
-
-        return initModule;
-    }
-
-    // This create a module.
-    static void CreateModuleInstance(LoadedModuleDescriptor loadedModuleDescriptor)
-    {
-
-    }
 
 }

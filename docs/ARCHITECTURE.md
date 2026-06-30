@@ -1,0 +1,426 @@
+# Architecture
+
+This document describes the internal architecture of HCore — its boot sequence, virtual file system, module loading mechanism, and inter-module communication.
+
+## High-Level Overview
+
+```mermaid
+graph TB
+    subgraph Kernel["HCore.Main (Kernel)"]
+        Program[Program.cs<br/>Boot & Orchestration]
+        VFS[FileSystem<br/>Union Mount Manager]
+        Loader[ModPackAssemblyLoadContext<br/>Isolated Assembly Loader]
+        MHost[ModuleHost<br/>Live module registry & broker]
+    end
+
+    subgraph VFSProviders["VFS Providers"]
+        Host[HostFileSystem<br/>Real disk at FS/]
+        Dev[DeviceFileSystem<br/>Synthetic /dev]
+        Mem[MemoryFileSystem<br/>In-memory /tmp]
+        Proc[ProcFileSystem<br/>Running modules /proc]
+    end
+
+    subgraph Packages["Packages (Runtime Loaded)"]
+        HInit[HCore.Packages.HInit<br/>Init Shell]
+        TestDemo[HCore.Packages.TestDemo<br/>Demo Modules]
+    end
+
+    subgraph Shared["Shared Contracts"]
+        Base[HCore.Modules.Base<br/>Interfaces & Base Classes]
+        Logyt[Logyt<br/>Logging]
+    end
+
+    Program --> VFS
+    Program --> Loader
+    Program --> MHost
+    VFS --> Host
+    VFS --> Dev
+    VFS --> Mem
+    VFS --> Proc
+    Loader --> Packages
+    MHost -->|instantiates| Packages
+    MHost --> Proc
+    Kernel --> Shared
+    Packages --> Base
+```
+
+## Kernel Space, User Space & System Calls
+
+HCore draws a hard line between the **kernel** and the **modules**, enforced by assembly references and `AssemblyLoadContext` isolation:
+
+- **Kernel space** — `HCore.Main`. Holds the real `FileSystem`, the `ModuleHost` (the process table), the assembly loaders, and the mount table. It is privileged: it can touch the disk, create instances, and mount filesystems. Modules may **never** reference `HCore.Main`.
+- **User space** — the `HCore.Packages.*` modules. Each loads into its own isolated `AssemblyLoadContext` and may reference **only** `HCore.Modules.Base`. A module has **no ambient access** to the kernel — it cannot `new FileSystem()` or read the instance table.
+
+### The system-call interface
+
+The only way a module reaches the kernel is through interfaces that are (a) declared in the shared `HCore.Modules.Base` contract and (b) implemented by the kernel and **injected** into the module on creation. These injected objects are HCore's equivalent of the system-call trap:
+
+| Module sees (user space) | Kernel provides (kernel space) | Syscall group |
+|--------------------------|--------------------------------|---------------|
+| `BaseImplement.Vfs : IModuleFileSystem` | `ModuleFileSystemProxy` → `FileSystem` | file calls: open / read / write / list … |
+| `BaseImplement.Host : IModuleHost` | `ModuleHost` | process / IPC calls: get / spawn / resolve |
+
+A module makes a "syscall" simply by calling a method on `Vfs` or `Host`. Because the implementation lives in the kernel and only a contract type crosses the boundary, a module cannot escalate beyond what those interfaces expose — the injected handles **are** its capabilities. Adding a new kernel capability (e.g. `Spawn`) is therefore exactly "adding a new system call": declare it on `IModuleHost`, implement it in `ModuleHost`.
+
+## Boot Sequence
+
+The entire system starts from `Program.Main()` in `HCore.Main`:
+
+```mermaid
+sequenceDiagram
+    participant Main as Program.Main()
+    participant VFS as FileSystem
+    participant Loader as AssemblyLoadContext
+    participant Host as ModuleHost
+    participant Module as Init Module
+
+    Main->>VFS: Create FileSystem instance
+    Main->>VFS: Mount "/" → HostFileSystem (FS/)
+    Main->>VFS: Mount "/dev" → DeviceFileSystem
+    Main->>VFS: Mount "/tmp" → MemoryFileSystem
+
+    Main->>VFS: ListModPacks("/packs")
+    VFS-->>Main: List of ModPackInfo
+
+    loop For each ModPackInfo
+        Main->>Loader: Create ModPackAssemblyLoadContext
+        Main->>VFS: Open DLL stream from /packs/<name>/<dll>
+        Main->>Loader: LoadFromStream(dll, pdb)
+        Loader-->>Main: Assembly
+        Main->>Main: Scan types for IModuleDescriptor
+        Main->>Main: Register LoadedModuleDescriptor
+    end
+
+    Main->>Host: Create ModuleHost(descriptors)
+    Main->>VFS: Mount "/proc" → ProcFileSystem(host)
+
+    Main->>Host: Spawn<IRunnable>("HCore.Packages.HInit.Init", "init")
+    Host->>Module: Activator.CreateInstance(ImplementType)
+    Host->>Module: AttachVfs(ModuleFileSystemProxy) + AttachHost(host)
+    Host-->>Main: init instance (at /proc/init)
+    Main->>Module: Run()
+    Module-->>Main: (returns when user exits)
+    Main->>Main: "HCore done!"
+```
+
+### Step-by-step
+
+1. **Create logger** — `ConsoleLogyt("HCore")` for kernel-level logging
+2. **Create VFS** — Empty `FileSystem` instance (union mount manager)
+3. **Mount filesystems**:
+   - `/` → `HostFileSystem` pointing to the physical `FS/` directory
+   - `/dev` → `DeviceFileSystem` (synthetic, read-only)
+   - `/tmp` → `MemoryFileSystem` (in-memory, volatile)
+4. **Discover packages** — Enumerate directories under `/packs`, read each `mpd` file to get DLL/PDB names
+5. **Load assemblies** — For each package, create an isolated `ModPackAssemblyLoadContext`, load the DLL from the VFS stream
+6. **Scan for modules** — Reflect over loaded assembly types, find `IModuleDescriptor` implementations, instantiate them
+7. **Register modules** — Store `LoadedModuleDescriptor` (descriptor + parent pack reference) in a global list
+8. **Create the module host** — Instantiate `ModuleHost` over the registered descriptors. It owns the live module instances and brokers references between modules.
+9. **Mount `/proc`** — Mount `ProcFileSystem` so running modules become visible in the VFS.
+10. **Spawn init** — Ask the host to `Spawn` `"HCore.Packages.HInit.Init"` as the instance named `init`. The host constructs the instance, injects its VFS (`AttachVfs`) and itself (`AttachHost`), and registers it at `/proc/init`. (`Spawn` is the create operation — look-up via `GetModuleInterface` never creates.)
+11. **Run** — Call `Run()` on the init module; the kernel blocks until it returns.
+
+## Virtual File System
+
+### Design
+
+The VFS follows a **union-mount** architecture inspired by Linux's VFS layer. A central `FileSystem` class manages a list of mount points, each mapping a path prefix to an `IVirtualFileSystem` implementation.
+
+```mermaid
+graph TD
+    FS[FileSystem<br/>Mount Manager]
+
+    FS -->|"/"| Host[HostFileSystem<br/>FS/ on disk]
+    FS -->|"/dev"| Dev[DeviceFileSystem<br/>Synthetic devices]
+    FS -->|"/tmp"| Mem[MemoryFileSystem<br/>In-memory storage]
+    FS -->|"/proc"| Proc[ProcFileSystem<br/>Running modules]
+
+    Host --> data[data/]
+    Host --> packs[packs/]
+    packs --> HInit[HCore.Packages.HInit/]
+    packs --> Demo[HCore.Packages.TestDemo/]
+```
+
+### Path Resolution
+
+When a path is requested (e.g., `/packs/HCore.Packages.HInit/mpd`), the `FileSystem`:
+
+1. Iterates through all mounts
+2. Finds the mount with the **longest matching prefix** (e.g., `/` matches, not `/dev` or `/tmp`)
+3. Strips the prefix from the path
+4. Delegates to the underlying `IVirtualFileSystem` with the remainder
+
+### VFS Providers
+
+| Provider | Mount | Description |
+|----------|-------|-------------|
+| `HostFileSystem` | `/` | Wraps a real directory on the host OS. All reads/writes go to disk. |
+| `DeviceFileSystem` | `/dev` | Read-only synthetic filesystem. Contains virtual device files. |
+| `MemoryFileSystem` | `/tmp` | Fully in-memory. Data is lost when the process exits. |
+| `ProcFileSystem` | `/proc` | Read-only synthetic filesystem. A **live view** of the modules currently running, rebuilt from the module host on every access. Mounted after the host is created. |
+
+### Node Types
+
+```mermaid
+classDiagram
+    class IVirtualNode {
+        <<interface>>
+        +Name: string
+        +Parent: IVirtualDirectory?
+        +Path: string
+    }
+    class IVirtualDirectory {
+        <<interface>>
+        +EnumerateFiles()
+        +EnumerateDirectories()
+        +GetFile(name)
+        +GetDirectory(name)
+        +CreateFile(name)
+        +CreateDirectory(name)
+        +Delete(name)
+    }
+    class IVirtualFile {
+        <<interface>>
+        +GetStream(mode, access)
+        +ReadAllBytes()
+        +Write(bytes)
+        +ReadString()
+    }
+
+    IVirtualNode <|-- IVirtualDirectory
+    IVirtualNode <|-- IVirtualFile
+```
+
+### Module Filesystem Proxy
+
+Modules never interact with `FileSystem` directly. Instead, each module receives a `ModuleFileSystemProxy` that:
+
+- Holds a **working directory** (initially set to the module's pack path)
+- Resolves relative paths against the working directory
+- Uses a shared lock for thread-safety
+- Exposes a simplified `IModuleFileSystem` interface
+
+## Module System
+
+### Terminology
+
+| Term | Description |
+|------|-------------|
+| **Package (ModPack)** | A distributable assembly (DLL + dependencies) placed in `FS/packs/<Name>/` |
+| **Module** | A unit of functionality inside a package, defined by an interface + implement + descriptor |
+| **Module Descriptor** | Metadata class implementing `IModuleDescriptor` that tells the kernel how to create the module |
+| **Module Implement** | The class containing the module's logic, extending `BaseImplement` |
+
+### The Module Triple
+
+Every module follows this pattern:
+
+```mermaid
+classDiagram
+    class IModule {
+        <<interface>>
+        Marker interface
+    }
+    class IMyModule {
+        <<interface>>
+        +MyMethod()
+    }
+    class MyModuleImplement {
+        +MyMethod()
+        +Vfs: IModuleFileSystem
+    }
+    class ModDescriptor {
+        +Name: string
+        +FriendlyName: string
+        +ImplementType: Type
+        +InterfaceType: Type
+    }
+
+    IModule <|-- IMyModule
+    BaseImplement <|-- MyModuleImplement
+    IMyModule <|.. MyModuleImplement
+    IModuleDescriptor <|.. ModDescriptor
+```
+
+### Assembly Isolation
+
+Each package is loaded into its own `ModPackAssemblyLoadContext`:
+
+```mermaid
+graph LR
+    Default[AssemblyLoadContext.Default]
+    Pack1[ModPackAssemblyLoadContext<br/>HInit]
+    Pack2[ModPackAssemblyLoadContext<br/>TestDemo]
+
+    Default -->|shared| Base[HCore.Modules.Base.dll]
+    Pack1 -->|isolated| HInitDll[HCore.Packages.HInit.dll]
+    Pack1 -->|isolated| ReadLine[ReadLine.dll]
+    Pack2 -->|isolated| DemoDll[HCore.Packages.TestDemo.dll]
+    Pack1 -.->|falls back| Default
+    Pack2 -.->|falls back| Default
+```
+
+**Resolution strategy:**
+1. First, check if the assembly is already loaded in `AssemblyLoadContext.Default` (shared assemblies like `HCore.Modules.Base`)
+2. If not found, look for `<AssemblyName>.dll` in the package's VFS directory and load from stream
+
+This ensures type identity is preserved for shared contracts while keeping package-specific dependencies isolated.
+
+## Inter-Module Communication
+
+HCore deliberately separates two concerns that are easy to conflate:
+
+- **Addressing** — *"who am I talking to?"* A module is identified by its descriptor `Name` and, once running, appears as a node at `/proc/<name>` in the VFS.
+- **Invocation** — *"what am I asking it to do?"* A method call (e.g. `Func1`) with its arguments, returning data.
+
+A method name is **not** a path segment, and a return value is **not** a new node. `/proc/Module1` identifies the module; calling `Func1` is a separate act through the module host; the value `Func1` returns is just data the caller holds locally. This is precisely why the namespace stays finite — there is no `/proc/Module1/Func1/<result>/…` recursion. The same boundary is drawn by D-Bus (object path vs. interface member), Plan 9 (a file vs. operations performed on it), and capability systems (holding a reference vs. invoking it).
+
+### Installed vs. Running
+
+| Layer | VFS location | OS analogy | Backed by |
+|-------|--------------|------------|-----------|
+| Installed / loadable | `/packs/<pack>/` | an executable on disk | `HostFileSystem` (real files) |
+| Running instance | `/proc/<name>/` | a live process | `ModuleHost` (live instances) |
+
+### The Module Host
+
+`ModuleHost` (`HCore.Main/Internal/ModuleHost.cs`) is the kernel's registry of live module instances and the broker for calls between them. It implements `IModuleHost`, which is declared in `HCore.Modules.Base` so any module can use it **without referencing the kernel** — the same decoupling pattern as `IModuleFileSystem`/`ModuleFileSystemProxy`.
+
+The host exposes exactly two "process" system calls (both on `IModuleHost`):
+
+- `T Spawn<T>(string moduleName, string instanceName)` — **create** a new named instance of a module (like `exec`), registered at `/proc/<instanceName>` but **not** run. This is the only call that resolves the concrete implementation type (via the descriptor registry). The same module can be spawned many times; each instance gets its own identity. Throws if the module name is unknown or the instance name is already in use.
+- `T GetModuleInterface<T>(string instancePath)` — **look up** an already-running instance by its `/proc` path (e.g. `"/proc/module1"`; a bare name like `"module1"` is also accepted). It **never creates** anything; it needs only the interface because the object already exists. Throws if nothing is running at that path.
+
+Instances are cached in the host's table keyed by **instance name**. On creation (`Spawn`) the host injects the module's kernel services: a `ModuleFileSystemProxy` (`AttachVfs`) and itself (`AttachHost`).
+
+> **Create vs. look up.** `Spawn` is the only operation that constructs an instance (it alone knows the implementation type); `GetModuleInterface` only finds something already running. A caller holding just an interface and a path cannot — and must not — create, which is exactly why lookup is a separate, creation-free call.
+
+Because the contract interface (e.g. `IModule1`) lives in a shared assembly whose **type identity is preserved across `AssemblyLoadContext`s** (see *Assembly Isolation*), the cast inside these calls succeeds even though caller and callee were loaded in different contexts.
+
+```mermaid
+sequenceDiagram
+    participant M2 as Module2 (caller)
+    participant Host as ModuleHost
+    participant M1 as Module1 (callee)
+
+    M2->>Host: GetModuleInterface<IModule1>("/proc/module1")
+    Note over Host: Look up the running instance<br/>(spawned earlier); never creates
+    Host-->>M2: IModule1 (typed reference)
+    M2->>M1: Func1()
+    M1-->>M2: (returns data)
+```
+
+### Example
+
+```csharp
+public class Module2Implement : BaseImplement, IModule2
+{
+    public void Run()
+    {
+        // The PATH identifies WHO (addressing); Func1() is the message (invocation).
+        // Module1 must already be spawned at /proc/module1 — this is a pure lookup.
+        var module1 = Host.GetModuleInterface<IModule1>("/proc/module1");
+        module1.Func1();
+    }
+}
+```
+
+The init shell exposes this interactively: `spawn <module> <instance>` creates an instance (without running it), and `run <instance>` runs an already-spawned `IRunnable` instance by its `/proc` path.
+
+### /proc — the running-module view
+
+`ProcFileSystem` mounts at `/proc` and renders the host's live instances as a read-only tree, rebuilt on every access:
+
+```
+/ $ ls /proc
+init/                                      # only the shell is running
+
+/ $ spawn HCore.Modules.TestDemo.Module1 module1
+spawned 'module1' from 'HCore.Modules.TestDemo.Module1' (at /proc/module1)
+/ $ spawn HCore.Packages.TestDemo.Module2 m2
+spawned 'm2' from 'HCore.Packages.TestDemo.Module2' (at /proc/m2)
+/ $ run /proc/m2
+Run Module 2!
+Func1 was called!
+
+/ $ ls /proc                               # both instances are now running
+init/
+module1/
+m2/
+
+/ $ cat /proc/module1/info
+instance:   module1
+module:     HCore.Modules.TestDemo.Module1
+friendly:   Demo module1
+interface:  HCore.Packages.TestDemo.Module1.IModule1
+implements: HCore.Packages.TestDemo.Module1.Module1Implement
+```
+
+A module appears in `/proc` only once it has actually been spawned — exactly like a process in a real `/proc`. Since `spawn` does not run the instance, `Module2` (here `m2`) is created first and only does work when `run` invokes it; it then looks up `module1`, which must already be spawned. The same module can be spawned several times under different instance names:
+
+```
+/ $ spawn HCore.Packages.TestDemo.Module2 worker-a
+spawned 'worker-a' from 'HCore.Packages.TestDemo.Module2' (at /proc/worker-a)
+/ $ spawn HCore.Packages.TestDemo.Module2 worker-b
+spawned 'worker-b' from 'HCore.Packages.TestDemo.Module2' (at /proc/worker-b)
+/ $ ls /proc
+module1/                             # the shared service
+worker-a/                            # instance 1 of Module2
+worker-b/                            # instance 2 of Module2
+```
+
+### AdamPipe\<T\> (asynchronous signaling)
+
+`GetModuleInterface<T>` is for *calling* a module synchronously. For producer-consumer **event streaming** between modules, `AdamPipe<T>` provides a thread-safe queue:
+
+```mermaid
+sequenceDiagram
+    participant Producer as Module A
+    participant Pipe as AdamPipe<T>
+    participant Consumer as Module B
+
+    Producer->>Pipe: SendSignal(item)
+    Note over Pipe: Enqueue + Release semaphore
+    Consumer->>Pipe: Wait()
+    Note over Pipe: Acquire semaphore + Dequeue
+    Pipe-->>Consumer: item
+```
+
+- `SendSignal(T item)` — enqueues an item and releases the semaphore.
+- `Wait(CancellationToken)` — blocks until an item is available, then dequeues and returns it.
+
+### Future Work (designed, not yet built)
+
+The mechanism above is the **typed** path: the caller imports the target's interface and gets compile-time-checked calls. The following are intentionally deferred — each is a clean layer on top of what exists, not a rewrite:
+
+- **Dynamic invocation** — `Host.Call(name, member, args)` for callers that do *not* hold the interface, paired with an `[Exposed]` attribute so a module publishes only a chosen subset of its members (a small capability boundary). This is the D-Bus / gRPC-reflection model: a typed proxy as optional sugar over a dynamic substrate.
+- **Process lifecycle** — `kill` / exit / reap. Today instances are never removed from `/proc`; a module cannot signal completion and be cleaned up.
+- **Service bootstrap** — an `/etc/services` directory of startup scripts the shell runs at boot to spawn the service modules others depend on, so consumers can rely on well-known instances (e.g. `/proc/module1`) already existing. Today services must be spawned manually first.
+- **Shell as its own module** — split the shell from the init process. Today HInit *is* init (PID 1, `/proc/init`); the long-term idea is a minimal init that launches the shell as a separate module.
+- **`ctl` / `data` file invocation** — driving a module by writing to `/proc/<name>/ctl` (the Plan 9 model), making modules scriptable straight from the shell.
+- **Out-of-process / remote modules** — would add a serialization layer; the typed proxy could then sit over a message transport unchanged.
+
+## Runtime Filesystem Layout
+
+```
+FS/                              (mounted at "/")
+├── data/
+│   └── init.log                 (runtime log file)
+├── hcore/
+│   └── init.CMP
+└── packs/
+    ├── readme
+    ├── HCore.Packages.HInit/
+    │   ├── mpd                  (descriptor: DLL name)
+    │   ├── HCore.Packages.HInit.dll
+    │   ├── HCore.Packages.HInit.pdb
+    │   ├── HCore.Packages.HInit.deps.json
+    │   ├── HCore.Modules.Base.dll
+    │   └── ReadLine.dll
+    └── HCore.Packages.TestDemo/
+        ├── mpd
+        ├── HCore.Packages.TestDemo.dll
+        ├── HCore.Packages.TestDemo.pdb
+        ├── HCore.Packages.TestDemo.deps.json
+        └── HCore.Modules.Base.dll
+```

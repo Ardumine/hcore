@@ -123,6 +123,14 @@ public class InitImplement : BaseImplement, IInit
                 RequireArgs(args, 3, "usage: append <file> <text>");
                 Vfs.WriteAllText(args[1], string.Join(' ', args.Skip(2)), append: true);
                 return;
+            case "run":
+                RequireArgs(args, 2, "usage: run <module-name>");
+                RunModule(args[1]);
+                return;
+            case "spawn":
+                RequireArgs(args, 3, "usage: spawn <module-name> <instance-name>");
+                SpawnModule(args[1], args[2]);
+                return;
             case "clear":
                 Console.Clear();
                 return;
@@ -130,6 +138,23 @@ public class InitImplement : BaseImplement, IInit
                 Console.WriteLine($"unknown command: {command}");
                 return;
         }
+    }
+
+    private void RunModule(string instancePath)
+    {
+        // Look up an ALREADY-SPAWNED instance by its /proc path and run it. The
+        // shell knows only the shared IRunnable contract, not the concrete type.
+        var module = Host.GetModuleInterface<IRunnable>(instancePath);
+        module.Run();
+    }
+
+    private void SpawnModule(string moduleName, string instanceName)
+    {
+        // Create a NEW named instance (like exec) — but do NOT run it. This works
+        // for any module, including services with no entry point. It becomes
+        // visible at /proc/<instanceName>; use `run` to run it if it is runnable.
+        Host.Spawn<IModule>(moduleName, instanceName);
+        Console.WriteLine($"spawned '{instanceName}' from '{moduleName}' (at /proc/{instanceName})");
     }
 
     private void ListDirectory(string path)
@@ -158,6 +183,8 @@ public class InitImplement : BaseImplement, IInit
         Console.WriteLine("  rename <path> <new-name>    Rename file or directory");
         Console.WriteLine("  write <file> <text>         Overwrite file with text");
         Console.WriteLine("  append <file> <text>        Append text to file");
+        Console.WriteLine("  spawn <module> <instance>   Create a new instance of a module (does not run it)");
+        Console.WriteLine("  run <instance>              Run an already-spawned instance (e.g. /proc/m2)");
         Console.WriteLine("  clear                       Clear terminal");
     }
 

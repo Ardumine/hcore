@@ -11,6 +11,17 @@ public abstract class BaseImplement : IModule
 	{
 		Vfs = vfs ?? throw new ArgumentNullException(nameof(vfs));
 	}
+
+	/// <summary>
+	/// The kernel surface this module uses to reach OTHER modules.
+	/// Attached by the kernel at creation, exactly like <see cref="Vfs"/>.
+	/// </summary>
+	public IModuleHost Host { get; private set; } = EmptyModuleHost.Instance;
+
+	public void AttachHost(IModuleHost host)
+	{
+		Host = host ?? throw new ArgumentNullException(nameof(host));
+	}
 }
 
 internal sealed class EmptyModuleFileSystem : IModuleFileSystem
@@ -49,4 +60,15 @@ internal sealed class EmptyModuleFileSystem : IModuleFileSystem
 	public bool Move(string sourcePath, string destinationPath, bool overwrite = false) => throw new InvalidOperationException("Module VFS is not attached.");
 
 	public bool Rename(string path, string newName, bool overwrite = false) => throw new InvalidOperationException("Module VFS is not attached.");
+}
+
+internal sealed class EmptyModuleHost : IModuleHost
+{
+	public static EmptyModuleHost Instance { get; } = new();
+
+	public T GetModuleInterface<T>(string instancePath) where T : IModule => throw NotAttached();
+
+	public T Spawn<T>(string moduleName, string instanceName) where T : IModule => throw NotAttached();
+
+	private static InvalidOperationException NotAttached() => new("Module host is not attached.");
 }
