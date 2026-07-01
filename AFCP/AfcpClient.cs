@@ -59,7 +59,7 @@ public sealed class AfcpClient : IDisposable
     public Task<SyncResponse> SyncAsync(string pathPrefix, CancellationToken ct = default)
     {
         EnsureConnected();
-        var req = new SyncRequest { PathPrefix = pathPrefix };
+        var req = new SyncRequest { Path = pathPrefix };
         return RoundTripAsync<SyncRequest, SyncResponse>(MessageType.Sync, req, ct);
     }
 

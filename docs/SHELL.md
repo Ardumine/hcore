@@ -14,7 +14,7 @@ When the console shell exits, init returns and the kernel stops.
 dotnet run --project HCore.Main
 ```
 
-> Use a **real terminal**. The console shell reads keystrokes directly (via the `ReadLine` library) and will throw if its input is piped or redirected.
+> Use a **real terminal**. The console shell reads keystrokes directly (via the `ReadLine` library); if stdin is redirected/piped it falls back to plain `Console.ReadLine` (no line editing), so piped input still works for automation.
 
 ## Commands
 
@@ -41,6 +41,12 @@ The shell dispatches through an `ICommand` registry (one class per command). Bui
 | `run <instance>` | Run an already-spawned instance by its `/proc` path (must be `IRunnable`) |
 | `kill <instance>` | **Kill** an instance and cascade to every child it owns (privileged) |
 | `service <start\|stop\|restart\|status\|list> [name]` | Manage `/etc/services` entries (see [Services](#services)) |
+| `afcp serve <port>` | Expose the local `/proc` tree over the AFCP protocol on `<port>` |
+| `afcp stop` | Stop the AFCP server |
+| `afcp mount <host> <port> <mountpoint>` | Mount a remote peer's tree at `<mountpoint>` (e.g. `afcp mount 127.0.0.1 8000 /other`) |
+| `afcp unmount <mountpoint>` | Tear down a remote mount |
+| `afcp status` | Show serving port and active mounts |
+| `afcp test` | Run the AFCP loopback self-test (spawn lidar → serve → mount → ls → cat → cleanup) |
 | `clear` | Clear the terminal |
 
 Arguments containing spaces can be quoted: `write notes.txt "hello world"`.
@@ -76,7 +82,8 @@ run usb
 | `/packs` | Installed packages (DLLs + `mpd`) |
 | `/dev` | Synthetic device files (read-only) |
 | `/tmp` | In-memory scratch (lost on exit) |
-| `/proc` | Live view of running module instances (read-only) |
+| `/proc` | Live view of running module instances + their data facets (read-only) |
+| `/<mountpoint>` (e.g. `/other`) | A remote peer's `/proc` tree, mounted via `afcp mount` (read-only) |
 
 After boot, `/proc` shows init's children plus the booted services, e.g.:
 
@@ -110,3 +117,35 @@ usb: Stopped
 ```
 
 `spawn` takes a module's **descriptor `Name`** plus an instance name and creates the instance but does **not** run it. `run` takes the `/proc` path (or bare name) of an **already-spawned** instance and runs it. `kill` is privileged: it works on any instance by path, not just ones you own. See [MODULE_HIERARCHY.md](MODULE_HIERARCHY.md) for the full hierarchy/cascade design and [MODULE_AUTHORING.md](MODULE_AUTHORING.md) to build your own module.
+
+## AFCP — remote data plane
+
+The `afcp` command drives the kernel-space AFCP bridge, exposing the local `/proc` tree over TCP and mounting remote peers' trees as read-only VFS mounts (9P-style: remoteness is a path prefix). It reaches the bridge through the shared `IAfcpKernel` interface (a `GetModuleInterface<IAfcpKernel>("@afcp")` lookup), so the shell package has no AFCP reference. Full design and the standalone `AFCP/` protocol library are documented in [AFCP.md](AFCP.md).
+
+```
+/ $ service start sensor        # start the lidar demo (exposes /proc/lidar/scan_data)
+/ $ afcp serve 8000
+serving on port 8000.
+/ $ afcp status
+serving: port 8000
+mounts: 0
+```
+
+On another instance, mount and browse the remote tree with ordinary `ls`/`cat`:
+
+```
+/ $ afcp mount 127.0.0.1 8000 /other
+mounted 127.0.0.1:8000 at /other.
+/ $ ls /other/proc/lidar
+info
+scan_data
+/ $ cat /other/proc/lidar/scan_data
+frame:       12
+angle_min:   -3.142
+angle_max:   3.142
+ranges:      [360 samples]
+/ $ afcp unmount /other
+unmounted /other.
+```
+
+`afcp test` runs the whole loopback (serve + mount + ls + cat + cleanup) in one instance — the quickest way to verify the remote data plane works.

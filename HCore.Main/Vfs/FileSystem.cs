@@ -44,6 +44,30 @@ public sealed class FileSystem
         _mounts.Sort((a, b) => b.Segments.Length.CompareTo(a.Segments.Length));
     }
 
+    /// <summary>
+    /// Remove a previously mounted filesystem at <paramref name="mountPoint"/>.
+    /// Returns false if no mount exists at that path. Used by the AFCP bridge's
+    /// <c>unmount</c> to tear down a remote tree.
+    /// </summary>
+    public bool Unmount(string mountPoint)
+    {
+        if (string.IsNullOrWhiteSpace(mountPoint) || !mountPoint.StartsWith('/'))
+        {
+            return false;
+        }
+
+        var normalized = PathHelpers.NormalizeAbsolute(mountPoint, "/");
+        var index = _mounts.FindIndex(m => string.Equals(m.Path, normalized, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+        {
+            return false;
+        }
+
+        var entry = _mounts[index];
+        _mounts.RemoveAt(index);
+        return true;
+    }
+
     public IVirtualDirectory MkDir(string path, string workingDirectory = "/")
     {
         var (mount, _, segments) = Resolve(path, workingDirectory);

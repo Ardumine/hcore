@@ -129,8 +129,52 @@ public sealed class DataHost
         lock (_lock)
         {
             return _facets.Values
-                .Select(f => new FacetInfo(f.InstanceName, f.FacetName, f.FormatForCat))
+                .Select(f => new FacetInfo(f.InstanceName, f.FacetName, f.FormatForCat, f.ValueType, f.Kind))
                 .ToList();
+        }
+    }
+
+    /// <summary>
+    /// Snapshot of exposed facets for the AFCP provider — the raw facet objects,
+    /// so the provider can read the formatted value and the type/kind metadata
+    /// without going through the typed <see cref="ReadData{T}"/> path (which
+    /// requires the caller to know the value type at compile time).
+    /// </summary>
+    internal IReadOnlyList<IFacet> GetFacetSnapshot()
+    {
+        lock (_lock)
+        {
+            return _facets.Values.ToList();
+        }
+    }
+
+    /// <summary>
+    /// Find a facet by its absolute <c>/proc/&lt;instance&gt;/&lt;facet&gt;</c> path
+    /// and return its formatted current value (the producer's cat-formatter), or
+    /// <c>null</c> if nothing has been published yet. Used by the AFCP provider's
+    /// <c>Read</c> to send a pre-formatted snapshot over the wire without the
+    /// consumer needing to deserialize the value type.
+    /// </summary>
+    internal string? ReadFormatted(string facetPath)
+    {
+        var (instance, facetName) = ParseFacetPath(facetPath);
+        IFacet? raw;
+        lock (_lock)
+        {
+            _facets.TryGetValue((instance, facetName), out raw);
+        }
+
+        return raw?.FormatForCat();
+    }
+
+    /// <summary>Find a facet by path, for the provider's type/kind metadata.</summary>
+    internal IFacet? FindFacet(string facetPath)
+    {
+        var (instance, facetName) = ParseFacetPath(facetPath);
+        lock (_lock)
+        {
+            _facets.TryGetValue((instance, facetName), out var raw);
+            return raw;
         }
     }
 
@@ -195,4 +239,4 @@ internal interface IFacet
     void NotifyProducerKilled();
 }
 
-internal sealed record FacetInfo(string InstanceName, string FacetName, Func<string?> FormatForCat);
+internal sealed record FacetInfo(string InstanceName, string FacetName, Func<string?> FormatForCat, Type ValueType, FacetKind Kind);

@@ -25,6 +25,29 @@ public sealed class ModuleHost : IModuleHost
     private readonly Dictionary<string, RunningInstance> _instances = [];
     private readonly object _instancesLock = new();
 
+    /// <summary>
+    /// Named kernel services (not module instances) reachable through
+    /// <see cref="GetModuleInterface{T}"/> via a reserved <c>@</c>-prefixed name,
+    /// e.g. <c>@afcp</c>. These are kernel-space singletons (like the AFCP bridge)
+    /// that implement a contract interface from HCore.Modules.Base but are not
+    /// <see cref="BaseImplement"/> modules and so do not live in the /proc table.
+    /// </summary>
+    private readonly Dictionary<string, object> _kernelServices = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Register a kernel-space singleton under a reserved <c>@</c>-prefixed name.</summary>
+    internal void RegisterKernelService(string name, object service)
+    {
+        if (string.IsNullOrWhiteSpace(name) || !name.StartsWith('@'))
+        {
+            throw new ArgumentException("Kernel-service names must be @-prefixed.", nameof(name));
+        }
+
+        lock (_instancesLock)
+        {
+            _kernelServices[name] = service;
+        }
+    }
+
     public ModuleHost(FileSystem vfs, object vfsProxyLock, DataHost dataHost, IReadOnlyList<LoadedModuleDescriptor> descriptors)
     {
         _vfs = vfs;
@@ -56,6 +79,24 @@ public sealed class ModuleHost : IModuleHost
     public T GetModuleInterface<T>(string instancePath) where T : IModule
     {
         var instanceName = InstanceNameFromPath(instancePath);
+
+        // Kernel-space singletons (AFCP bridge, etc.) are addressed by a reserved
+        // @-prefix and live outside the /proc instance table.
+        if (instanceName.StartsWith('@'))
+        {
+            lock (_instancesLock)
+            {
+                if (!_kernelServices.TryGetValue(instanceName, out var service))
+                {
+                    throw new InvalidOperationException($"No kernel service registered as '{instanceName}'.");
+                }
+
+                return service is T typed
+                    ? typed
+                    : throw new InvalidOperationException($"Kernel service '{instanceName}' does not implement {typeof(T).FullName}.");
+            }
+        }
+
         lock (_instancesLock)
         {
             if (!_instances.TryGetValue(instanceName, out var instance))

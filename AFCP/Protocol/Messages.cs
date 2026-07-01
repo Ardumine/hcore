@@ -16,26 +16,27 @@ public sealed class ConnectResponse
     public string? Error { get; set; }
 }
 
-// --- Sync (list facets under a path prefix) ---
+// --- Sync (list a directory) ---
 
 public sealed class SyncRequest
 {
-    public string PathPrefix { get; set; } = string.Empty;
+    /// <summary>Absolute path on the peer, e.g. <c>/</c>, <c>/proc</c>, <c>/etc</c>.</summary>
+    public string Path { get; set; } = string.Empty;
 }
 
-public sealed class FacetInfo
+/// <summary>One entry in a remote directory listing.</summary>
+public sealed class DirEntry
 {
-    public string Path { get; set; } = string.Empty;
-    public string ValueTypeFullName { get; set; } = string.Empty;
-    public FacetPrimitiveKind Kind { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool IsDirectory { get; set; }
 }
 
 public sealed class SyncResponse
 {
-    public FacetInfo[] Facets { get; set; } = Array.Empty<FacetInfo>();
+    public DirEntry[] Entries { get; set; } = Array.Empty<DirEntry>();
 }
 
-// --- Read (snapshot) ---
+// --- Read (file contents / facet snapshot) ---
 
 public sealed class ReadRequest
 {
@@ -44,12 +45,10 @@ public sealed class ReadRequest
 
 public sealed class ReadResponse
 {
-    /// <summary>The serialized current value, or null if nothing has been published yet.</summary>
+    /// <summary>The file's raw bytes (the server reads live from its VFS on every request).</summary>
     public byte[]? Data { get; set; }
-    public string? ValueTypeFullName { get; set; }
-    public long Sequence { get; set; }
-    public long InterFrameDelta { get; set; }
-    public bool HasInterFrameDelta { get; set; }
+    /// <summary>True if the path exists; false lets the client report "not found".</summary>
+    public bool Exists { get; set; }
 }
 
 // --- Subscribe (push) ---

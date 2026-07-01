@@ -35,6 +35,10 @@ internal static class Program
         // Expose the running modules as a live /proc tree (like Linux/Plan 9).
         _vfs.Mount("/proc", new ProcFileSystem(host, dataHost));
 
+        // Register the kernel-space AFCP bridge as a named kernel service so the
+        // shell can reach it via GetModuleInterface<IAfcpKernel>("@afcp").
+        host.RegisterKernelService("@afcp", new AfcpKernelService(_vfs, host));
+
         // The init module (PID 1) — the kernel spawns it explicitly, then runs it.
         var initModule = host.Spawn<IRunnable>("HCore.Packages.HInit.Init", "init");
 

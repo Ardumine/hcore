@@ -16,9 +16,10 @@ The source is clean — only **one** real TODO remains:
 - `HCore.Modules.Base/IModuleHost.cs:86` — `Kill` capability gap (documented; needs the capability model).
 
 Services are built (`FS/etc/services/*.svc`, `ServiceCommand.cs`, init boots them). Shell has
-FileSystem / Help / Process / Service commands. **The local data plane (§A) is now implemented
-and verified** — contracts, `DataHost`, dispatch policies, breaker, `ProducerKilled`, the `cat`
-inspection file, and the `HCore.Packages.Sensor` demo. No AFCP / remote / capability / config yet.
+FileSystem / Help / Process / Service / **AFCP** commands. **The local data plane (§A) is
+implemented and verified.** **AFCP Layer 1 (§C1) — remote mounts + Sync + Read — is implemented
+and verified** via the `afcp test` loopback self-test (see [AFCP.md](AFCP.md)). AFCP Layer 2
+(subscribe-push) and Layer 3 (MKCall), the capability model, and the config system remain.
 
 ---
 
@@ -97,10 +98,19 @@ cell coalesce with sequence gaps, stream overload breaker trip, and `kill` → `
 
 Design work remains; these are additive layers on top of §A, not blockers for the first slice.
 
-- ✱ **C1. AFCP transport + 9P-style remote mounts** (`DATA_PLANE_DESIGN.md` Part IX). North star;
-      no protocol/packet design yet. Biggest pending piece.
+- ✅ **C1. AFCP transport + 9P-style remote mounts** (`DATA_PLANE_DESIGN.md` Part IX) —
+      **Layer 1 DONE** (mount + Sync + Read over TCP, verified via the `afcp test`
+      loopback self-test). The standalone `AFCP/` library (5-layer stack: Transport
+      → Framing → Multiplex → IL-emit Serializer → Protocol) and the kernel-space
+      bridge (`AfcpKernelService` + `DataHostAfcpProvider` + `RemoteFileSystem`,
+      driven by the `afcp` shell command) are implemented. See [AFCP.md](AFCP.md).
+      **Layer 2** (subscribe-push over the wire — provider currently rejects
+      Subscribe) and **Layer 3** (MKCall/`ModuleProxy` remote method calls) remain.
+      The bridge is kernel-space for now; migrating it to an `HCore.Packages.Afcp`
+      package needs `IVirtualFileSystem` moved to Base + a proc-view/mount contract
+      (documented in AFCP.md "Migration path").
 - ✱ **C2. MKCall / `ModuleProxy`** — required for remote method calls (V2's was deleted; remote
-      calls need a marshalling proxy back). Not designed.
+      calls need a marshalling proxy back). Not designed. (= AFCP Layer 3.)
 - ✱ **C3. Capability model** — needed before remote mounts are production-safe; also closes the
       `Kill` gap (`IModuleHost.cs:86`). Not designed.
 - ✱ **C4. Config system** — needed for mount points + per-module config injection (V2's
@@ -120,8 +130,9 @@ Design work remains; these are additive layers on top of §A, not blockers for t
       push ships. The `ISubscription` handle is already rich enough for the adapter to sit on top.
 - ⏸ **D2. Pool/loaned messages** (ROS2-style pre-allocated frames, ref-counted) — after a profiler
       demands it. Ship allocate-immutable-per-frame first.
-- ⏸ **D3. Remote case entirely** — ship local first; `(Sequence, InterFrameDelta)` is
-      forward-compatible and will work unchanged when AFCP arrives.
+- ⏸ **D3. Remote case — Layer 2/3** — Layer 1 (mount/snapshot) is done (§C1);
+      Layer 2 (subscribe-push) and Layer 3 (MKCall) remain. `(Sequence,
+      InterFrameDelta)` is forward-compatible and will work unchanged when they arrive.
 - ⏸ **D4. Backoff policy specifics** — re-subscribe backoff is the consumer's job; the kernel API
       for it is not designed (and may not need to be — consumer-side concern).
 

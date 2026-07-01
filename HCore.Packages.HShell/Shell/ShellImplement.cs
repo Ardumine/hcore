@@ -35,7 +35,23 @@ public class ShellImplement : BaseImplement, IShell
 
         while (!ctx.ExitRequested)
         {
-            var line = ReadLine.Read($"{Vfs.WorkingDirectory} $ ");
+            // ReadLine (the editing library) throws when stdin is redirected
+            // (no TTY) — fall back to plain Console.ReadLine so the shell still
+            // works under pipes / automation.
+            string? line;
+            try
+            {
+                line = ReadLine.Read($"{Vfs.WorkingDirectory} $ ");
+            }
+            catch (InvalidOperationException)
+            {
+                line = Console.ReadLine();
+                if (line is not null)
+                {
+                    Console.WriteLine($"{Vfs.WorkingDirectory} $ {line}");
+                }
+            }
+
             if (line is null)
             {
                 break;
@@ -141,6 +157,7 @@ public class ShellImplement : BaseImplement, IShell
         _registry.Register(new RunCommand());
         _registry.Register(new KillCommand());
         _registry.Register(new ServiceCommand());
+        _registry.Register(new AfcpCommand());
         _registry.Register(new ExitCommand());
         _registry.Register(new HelpCommand(_registry));
     }
