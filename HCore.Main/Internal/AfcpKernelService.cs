@@ -2,7 +2,9 @@ using AFCP;
 using AFCP.Protocol;
 using HCore.Main.Vfs;
 using HCore.Modules.Base;
+using System.Collections.Concurrent;
 using System.Net;
+using System.Reflection;
 using System.Text;
 
 namespace HCore.Main.Internal;
@@ -27,7 +29,9 @@ namespace HCore.Main.Internal;
 /// documented trusted-LAN gap as <c>Kill</c>. Subscribe-push (Layer 2) is now
 /// wired: <c>VfsAfcpProvider.Subscribe</c> backs a live facet subscription via
 /// <see cref="DataHost"/> and streams <c>EventNotify</c> frames to the peer.
-/// MKCall (Layer 3) remains deferred.
+/// MKCall (Layer 3) is wired too: <c>VfsAfcpProvider.Call</c> resolves a remote
+/// instance via <see cref="ModuleHost"/> and invokes the named method through a
+/// compiled <c>FastMethodInfo</c> delegate (cached per type+method).
 /// </summary>
 internal sealed class AfcpKernelService : IAfcpKernel
 {
@@ -58,7 +62,7 @@ internal sealed class AfcpKernelService : IAfcpKernel
             }
 
             var endpoint = new IPEndPoint(IPAddress.Any, port);
-            var provider = new VfsAfcpProvider(_vfs, _dataHost, _serializer);
+            var provider = new VfsAfcpProvider(_vfs, _moduleHost, _dataHost, _serializer);
             _server = new AfcpServer(endpoint, provider, _serializer);
             _server.Start();
             _servingPort = port;
@@ -211,7 +215,60 @@ internal sealed class AfcpKernelService : IAfcpKernel
             Log("--- cat again (fresh frame) ---");
             Log(_vfs.GetFile("/selftest/proc/lidar/scan_data").ReadString().TrimEnd());
 
-            // 8. C7a — remote writes: mkdir, write, cat back, delete, confirm gone.
+            // 8. C7c — MKCall (Layer 3). Get a remote ILidar proxy through the
+            // mount and call methods on it. HCore.Main cannot reference the
+            // Sensor package, so the interface Type is resolved from the
+            // descriptor registry and the proxy is built / invoked reflectively
+            // — the wire path is identical to a compile-time-typed call.
+            Log("--- MKCall: resolve ILidar + build remote proxy (/selftest/proc/lidar) ---");
+            var lidarIface = _moduleHost.GetModuleInterfaceType("HCore.Packages.Sensor.Lidar")
+                ?? throw new InvalidOperationException("Sensor lidar module not registered; cannot run MKCall self-test.");
+            var remoteLidar = _moduleHost.GetRemoteModuleInterface(lidarIface, "/selftest/proc/lidar");
+            Log("got remote proxy.");
+
+            static object CallRemote(object proxy, Type iface, string method, params object[] args)
+            {
+                var argTypes = args.Length == 0 ? Type.EmptyTypes : args.Select(a => a.GetType()).ToArray();
+                return iface.GetMethod(method, argTypes)!.Invoke(proxy, args)!;
+            }
+
+            Log("--- MKCall: SetFrameRate(50) (void + int arg) ---");
+            CallRemote(remoteLidar, lidarIface, "SetFrameRate", 50);
+            Log("ok.");
+
+            Log("--- MKCall: GetFrameRate() (int return) ---");
+            var rate = (int)CallRemote(remoteLidar, lidarIface, "GetFrameRate");
+            Log($"returned {rate}");
+            if (rate != 50)
+            {
+                throw new InvalidOperationException($"expected GetFrameRate()==50, got {rate}.");
+            }
+
+            Log("--- MKCall: GetName() (string return) ---");
+            var name = (string)CallRemote(remoteLidar, lidarIface, "GetName");
+            Log($"returned '{name}'");
+            if (string.IsNullOrEmpty(name))
+            {
+                throw new InvalidOperationException("expected a non-empty name from GetName().");
+            }
+
+            // A proxy to a non-existent instance is created eagerly (no instance
+            // check at creation time — the server only learns the path on first
+            // call); the first call must surface the server-side "not found" as a
+            // RemoteCallException.
+            Log("--- MKCall: failing call on /selftest/proc/nope ---");
+            var nope = _moduleHost.GetRemoteModuleInterface(lidarIface, "/selftest/proc/nope");
+            try
+            {
+                CallRemote(nope, lidarIface, "GetFrameRate");
+                throw new InvalidOperationException("expected a remote call on a missing instance to throw.");
+            }
+            catch (TargetInvocationException tie) when (tie.InnerException is RemoteCallException rce)
+            {
+                Log($"correctly threw RemoteCallException: {rce.Message}");
+            }
+
+            // 9. C7a — remote writes: mkdir, write, cat back, delete, confirm gone.
             // Scratch space under /tmp (MemoryFileSystem) so the self-test never
             // touches the real host FS.
             Log("--- mkdir /selftest/tmp/afcp_test ---");
@@ -244,7 +301,7 @@ internal sealed class AfcpKernelService : IAfcpKernel
                 throw new InvalidOperationException("delete of the scratch directory failed.");
             }
 
-            // 9. C7b — subscribe-push over the wire (raw client). Prove the server
+            // 10. C7b — subscribe-push over the wire (raw client). Prove the server
             // pushes live EventNotify frames with advancing sequence and real bytes.
             Log("--- subscribe /proc/lidar/scan_data (raw client) ---");
             var seqs = new List<long>();
@@ -289,7 +346,7 @@ internal sealed class AfcpKernelService : IAfcpKernel
             if (!increasing) throw new InvalidOperationException("pushed frame sequence numbers not strictly increasing.");
             if (!dataNonEmpty) throw new InvalidOperationException("a pushed frame carried empty Data.");
 
-            // 10. C7b transparent typed path — spawn the demo consumer, point it at the
+            // 11. C7b transparent typed path — spawn the demo consumer, point it at the
             // MOUNTED facet, and confirm it receives typed ScanFrame frames via the
             // ordinary Data.Subscribe<T> (the consumer never knows the facet is remote).
             Log("--- transparent subscribe via demo consumer (/selftest/proc/lidar/scan_data) ---");
@@ -306,7 +363,7 @@ internal sealed class AfcpKernelService : IAfcpKernel
                 throw new InvalidOperationException($"consumer received {received} frames over the mount, expected >=2.");
             }
 
-            // 11. ProducerKilled over the wire — kill the lidar, confirm the consumer's
+            // 12. ProducerKilled over the wire — kill the lidar, confirm the consumer's
             // remote subscription trips with ProducerKilled (sink.ProducerGone path).
             Log("--- kill lidar -> expect consumer ProducerKilled ---");
             _moduleHost.Kill("lidar");
@@ -376,6 +433,7 @@ internal sealed class AfcpKernelService : IAfcpKernel
 internal sealed class VfsAfcpProvider : IAfcpProvider
 {
     private readonly FileSystem _vfs;
+    private readonly ModuleHost _moduleHost;
     private readonly DataHost _dataHost;
     private readonly Serializer _serializer;
 
@@ -386,9 +444,19 @@ internal sealed class VfsAfcpProvider : IAfcpProvider
     private readonly object _subLock = new();
     private ulong _nextSubscriptionId;
 
-    public VfsAfcpProvider(FileSystem vfs, DataHost dataHost, Serializer serializer)
+    // Layer 3 — MKCall: compiled invokers keyed by (declaring type, method name,
+    // parameter type names). Resolved once per (type, method) pair on first call,
+    // then reused — no per-call reflection or string-to-Type resolution. The key
+    // is a struct with sequence-equal string-array semantics (arrays don't
+    // override Equals/GetHashCode). V2's equivalent was a per-path
+    // ReturnValueDelegate[] indexed by a uint method id; V3 keys by name +
+    // param-type names instead (overload-safe, no shared enumeration contract).
+    private readonly ConcurrentDictionary<CallKey, FastMethodInfo> _callCache = new();
+
+    public VfsAfcpProvider(FileSystem vfs, ModuleHost moduleHost, DataHost dataHost, Serializer serializer)
     {
         _vfs = vfs;
+        _moduleHost = moduleHost;
         _dataHost = dataHost;
         _serializer = serializer;
     }
@@ -564,5 +632,134 @@ internal sealed class VfsAfcpProvider : IAfcpProvider
         ISubscription? sub;
         lock (_subLock) { _subscriptions.Remove(subscriptionId, out sub); }
         sub?.Dispose();
+    }
+
+    public CallResponse Call(CallRequest request)
+    {
+        try
+        {
+            if (!_moduleHost.TryResolveInstance(request.InstancePath, out var instance))
+            {
+                return new CallResponse
+                {
+                    Success = false,
+                    Error = $"No running instance at '{request.InstancePath}'."
+                };
+            }
+
+            var declaringType = instance.GetType();
+            var key = new CallKey(declaringType, request.MethodName, request.ParamTypeNames);
+
+            var invoker = _callCache.GetOrAdd(key, k =>
+            {
+                var (paramTypes, resolveErr) = ResolveParamTypes(k.ParamTypeNames);
+                if (resolveErr is not null)
+                {
+                    throw new InvalidOperationException(resolveErr);
+                }
+
+                var method = k.DeclaringType.GetMethod(
+                    k.MethodName,
+                    BindingFlags.Public | BindingFlags.Instance,
+                    binder: null,
+                    types: paramTypes!,
+                    modifiers: null);
+
+                if (method is null)
+                {
+                    throw new MissingMethodException(
+                        k.DeclaringType.FullName, $"{k.MethodName}({string.Join(", ", k.ParamTypeNames)})");
+                }
+
+                return new FastMethodInfo(method);
+            });
+
+            var result = invoker.Invoke(instance, request.Args);
+            return new CallResponse { Success = true, ReturnValue = result };
+        }
+        catch (TargetInvocationException ex)
+        {
+            // Unwrap the real exception thrown by the method itself.
+            var real = ex.InnerException ?? ex;
+            return new CallResponse { Success = false, Error = $"{real.GetType().FullName}: {real.Message}" };
+        }
+        catch (Exception ex)
+        {
+            return new CallResponse { Success = false, Error = $"{ex.GetType().FullName}: {ex.Message}" };
+        }
+    }
+
+    /// <summary>
+    /// Resolve each parameter type name (assembly-qualified) to a <see cref="Type"/>.
+    /// Returns an error string instead of throwing so the caller can fold it into
+    /// a <see cref="CallResponse"/> without a try/catch around the cache miss path.
+    /// </summary>
+    private static (Type[]? Types, string? Error) ResolveParamTypes(string[] names)
+    {
+        if (names.Length == 0) return (Type.EmptyTypes, null);
+
+        var types = new Type[names.Length];
+        for (var i = 0; i < names.Length; i++)
+        {
+            var t = Type.GetType(names[i]);
+            if (t is null)
+            {
+                return (null, $"Could not resolve parameter type '{names[i]}'. Is its assembly loaded on the serving peer?");
+            }
+            types[i] = t;
+        }
+        return (types, null);
+    }
+
+    /// <summary>
+    /// Cache key for the MKCall invoker. <see cref="string"/>[] does not override
+    /// <see cref="object.Equals(object?)"/>, so this struct implements sequence
+    /// equality + a precomputed hash (built once over the param names at key
+    /// construction). Two requests for the same (type, method, param signature)
+    /// hit the same <see cref="FastMethodInfo"/>.
+    /// </summary>
+    private readonly struct CallKey : IEquatable<CallKey>
+    {
+        public Type DeclaringType { get; }
+        public string MethodName { get; }
+        public string[] ParamTypeNames { get; }
+        private readonly int _hashCode;
+
+        public CallKey(Type declaringType, string methodName, string[] paramTypeNames)
+        {
+            DeclaringType = declaringType;
+            MethodName = methodName;
+            ParamTypeNames = paramTypeNames;
+
+            var h = new HashCode();
+            h.Add(declaringType);
+            h.Add(methodName, StringComparer.Ordinal);
+            for (var i = 0; i < paramTypeNames.Length; i++)
+            {
+                h.Add(paramTypeNames[i], StringComparer.Ordinal);
+            }
+            _hashCode = h.ToHashCode();
+        }
+
+        public bool Equals(CallKey other)
+        {
+            if (!ReferenceEquals(DeclaringType, other.DeclaringType)
+                || !string.Equals(MethodName, other.MethodName, StringComparison.Ordinal))
+            {
+                return false;
+            }
+            if (ParamTypeNames.Length != other.ParamTypeNames.Length) return false;
+            for (var i = 0; i < ParamTypeNames.Length; i++)
+            {
+                if (!string.Equals(ParamTypeNames[i], other.ParamTypeNames[i], StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        public override bool Equals(object? obj) => obj is CallKey other && Equals(other);
+        public override int GetHashCode() => _hashCode;
     }
 }

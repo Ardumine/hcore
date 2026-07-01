@@ -34,8 +34,10 @@ testing over `/remote`: no TCP connection ever set `NoDelay`, so every AFCP fram
 accept paths construct a connection). **AFCP Layer 2 (subscribe-push, §C7b) — transparent
 remote `Data.Subscribe<T>` over a mount — is implemented and verified** via the extended
 `afcp test` (raw-client push + the `RemoteSlam` demo consumer over a loopback mount +
-`ProducerKilled` on kill). AFCP Layer 3 (MKCall), the capability model, and the config system
-remain.
+`ProducerKilled` on kill). **AFCP Layer 3 (MKCall proxy, §C7c) — remote method calls
+through `GetModuleInterface<T>(remotePath)` returning a `DispatchProxy` — is implemented
+and verified** via the extended `afcp test`. The capability model, the config system,
+and typed wire errors remain.
 
 ---
 
@@ -129,6 +131,7 @@ Design work remains; these are additive layers on top of §A, not blockers for t
       follow-up gaps are tracked under C7.
 - ✱ **C2. MKCall / `ModuleProxy`** — required for remote method calls (V2's was deleted; remote
       calls need a marshalling proxy back). Not designed. (= AFCP Layer 3.)
+      **DONE (§C7c).**
 - ✱ **C3. Capability model** — needed before remote mounts (especially **writes**) are
       production-safe; also closes the `Kill` gap (`IModuleHost.cs:86`). Not designed.
       Today everything is wide-open trusted-LAN (documented gap, same stance as `Kill`).
@@ -186,6 +189,42 @@ Design work remains; these are additive layers on top of §A, not blockers for t
       subscribe must be AFCP-serializable.
 - ✱ **C7c. Layer 3 — MKCall proxy** (= C2). `GetModuleInterface<T>(remotePath)` returns a
       marshalling proxy. Not designed.
+      **DONE.** `GetModuleInterface<T>` now consults `FileSystem.TryResolveMount` (mirroring
+      `DataHost.Subscribe<T>`); a path resolving to a `RemoteFileSystem` returns a
+      `RemoteModuleProxy<T> : DispatchProxy` (V2's `ModuleProxy` design, ported) instead of a
+      local instance. Each method invocation is marshalled into a new `Call` (MessageType 9)
+      request/response: `CallRequest{ InstancePath, MethodName, ParamTypeNames[], object[] Args }`
+      / `CallResponse{ Success, Error, object? ReturnValue }`. Method ID is **name + parameter
+      type assembly-qualified names** — overload-safe and stateless, deliberately NOT V2's `uint`
+      method index (that required both peers to enumerate the interface identically, and V2's
+      name-keyed cache collided on overloads). Args/return ride the serializer's polymorphic
+      `object[]`/`object?` path (each value carries its own runtime type tag via
+      `DerivedSerializer`) — no per-arg wrapper, same mechanism V2 used. Server side
+      (`VfsAfcpProvider.Call`) resolves the instance via a new non-generic
+      `ModuleHost.TryResolveInstance`, reflects the method once (cached in a
+      `ConcurrentDictionary<CallKey, FastMethodInfo>`), and invokes via a compiled
+      `Expression` delegate (`FastMethodInfo`, ported from V2's `Kernel.AFCP.FastMethod.cs` —
+      not `MethodInfo.Invoke`, to keep the hot path off reflection). Local calls stay
+      zero-overhead direct dispatch (V3 dropped V2's always-proxy; the proxy is returned ONLY
+      for remote paths). Failure surface is `CallResponse{Success=false, Error="Type.FullName: Message"}`
+      → the proxy throws `RemoteCallException` (in `HCore.Modules.Base`, catchable by user
+      space). No exception-type reconstruction (C7d), no out/ref params, no `Nullable<T>` value
+      args/returns (serializer limitation), no capability check (C3 — trusted-LAN, same stance
+      as remote writes and `Kill`), `CancellationToken.None` (no mux timeout — C7f). The proxy
+      uses `CancellationToken.None` and blocks synchronously (module interface methods are
+      synchronous in V3). Verified via the extended `afcp test`: a remote `ILidar` proxy over a
+      loopback mount exercises a void+int-arg method (`SetFrameRate(50)`), an int return
+      (`GetFrameRate()`→50), a string return (`GetName()`→"lidar-demo"), and a failing call on a
+      missing instance (surfaces `RemoteCallException`). The self-test resolves `ILidar` and
+      drives the proxy reflectively because `HCore.Main` cannot reference the `Sensor` package
+      (`ModuleHost.GetRemoteModuleInterface(Type, path)` + `GetModuleInterfaceType(moduleName)`);
+      the wire path is identical to a compile-time-typed call.
+      **Latent serializer bug fixed by this work:** `StringSerializer.GetStringDeserializer`
+      did `Ldelema` on element 0 of the body array to pin it for the `string(char*,0,len)`
+      constructor — which throws `IndexOutOfRangeException` for a zero-length (empty) string,
+      the same class of bug as the zero-length unmanaged array fast path fixed in C7a. Never
+      surfaced before because existing messages used `null` (handled by the null-wrapper), never
+      `""`; `CallResponse.Error` defaults to `""`. Fixed in `AFCP/Serializer/Serializers/StringSerializer.cs`.
 - ☐ **C7d. Typed errors over the wire.** A missing file, a permission error, and a
       "not a directory" all collapse to `Exists=false` / empty listing. No error response
       type for `Sync`/`Read` — add one so failures are distinguishable.
@@ -202,10 +241,10 @@ Design work remains; these are additive layers on top of §A, not blockers for t
       push ships. The `ISubscription` handle is already rich enough for the adapter to sit on top.
 - ⏸ **D2. Pool/loaned messages** (ROS2-style pre-allocated frames, ref-counted) — after a profiler
       demands it. Ship allocate-immutable-per-frame first.
-- ⏸ **D3. Remote case — Layer 3** — Layer 1 (mount/snapshot, §C1) and Layer 2
-      (subscribe-push, §C7b) are done; Layer 3 (MKCall) remains. `(Sequence,
-      InterFrameDelta)` proved forward-compatible: Layer 2 carries them unchanged over
-      the wire (`EventNotify`).
+- ⏸ **D3. Remote case — Layer 3** — Layer 1 (mount/snapshot, §C1), Layer 2
+      (subscribe-push, §C7b), and Layer 3 (MKCall proxy, §C7c) are all done.
+      `(Sequence, InterFrameDelta)` proved forward-compatible: Layer 2 carries them
+      unchanged over the wire (`EventNotify`).
 - ⏸ **D4. Backoff policy specifics** — re-subscribe backoff is the consumer's job; the kernel API
       for it is not designed (and may not need to be — consumer-side concern).
 
@@ -241,11 +280,11 @@ B1–B6 ✅ → A1 (contracts) ✅ → A2 (impl) ✅ → A3 (demo) ✅ → [loca
                                                                      ↓
                                C7a (remote writes) ✅ → [Write/MkDir/Remove SHIPPED]
                                                                      ↓
-                               C7b (Layer 2 subscribe-push) ✅ → [transparent remote Subscribe SHIPPED]
-                                                                     ↓
-                                                          C7c/C2 (MKCall proxy)
-                                                                     ↓
-                               C7d (typed errors) / C7e (streaming) / C7f (reconnect) — on demand
+                                C7b (Layer 2 subscribe-push) ✅ → [transparent remote Subscribe SHIPPED]
+                                                                      ↓
+                                                           C7c/C2 (MKCall proxy) ✅ → [remote GetModuleInterface<T> SHIPPED]
+                                                                      ↓
+                                C7d (typed errors) / C7e (streaming) / C7f (reconnect) — on demand
                                                                      ↓
                                C3 (capability — gates production writes) / C4 (config) / C5 (dynamic invocation)
                                                                      ↓

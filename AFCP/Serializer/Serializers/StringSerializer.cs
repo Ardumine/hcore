@@ -75,6 +75,15 @@ public static class StringSerializer
         il.Emit(OpCodes.Ldobj, typeof(uint));
         il.Emit(OpCodes.Stloc_1);
 
+        // An empty string has a zero-length body — `Ldelema` on element 0 of an
+        // empty array below always bounds-checks even though the body construct
+        // is skipped for zero length (the same class of bug as the zero-length
+        // unmanaged array fast path fixed in C7a). Short-circuit to string.Empty.
+        Label emptyLabel = il.DefineLabel();
+        Label doneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc_1);
+        il.Emit(OpCodes.Brfalse_S, emptyLabel);
+
         il.Emit(OpCodes.Ldloc_1);
         il.Emit(OpCodes.Newarr, typeof(byte));
         il.Emit(OpCodes.Stloc_2);
@@ -94,7 +103,12 @@ public static class StringSerializer
         il.Emit(OpCodes.Ldc_I4_2);
         il.Emit(OpCodes.Div);
         il.Emit(OpCodes.Newobj, strConstructor!);
+        il.Emit(OpCodes.Br_S, doneLabel);
 
+        il.MarkLabel(emptyLabel);
+        il.Emit(OpCodes.Ldsfld, typeof(string).GetField(nameof(string.Empty))!);
+
+        il.MarkLabel(doneLabel);
         il.Emit(OpCodes.Ret);
         return serializeMethod;
     }

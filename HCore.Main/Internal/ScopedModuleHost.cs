@@ -21,7 +21,7 @@ internal sealed class ScopedModuleHost : IModuleHost
         _owner = owner;
     }
 
-    public T GetModuleInterface<T>(string instancePath) where T : IModule
+    public T GetModuleInterface<T>(string instancePath) where T : class, IModule
         => _kernel.GetModuleInterface<T>(instancePath);
 
     public T Spawn<T>(string moduleName, string instanceName) where T : IModule

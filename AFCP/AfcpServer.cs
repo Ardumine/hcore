@@ -165,6 +165,12 @@ public sealed class AfcpServer : IDisposable
                         lock (_activeSubscriptions) { _activeSubscriptions.Remove(req.SubscriptionId); }
                         return Array.Empty<byte>();
                     }
+                case MessageType.Call:
+                    {
+                        var req = Deserialize<CallRequest>(payload);
+                        var res = _provider.Call(req);
+                        return Serialize(res);
+                    }
                 default:
                     return Array.Empty<byte>();
             }

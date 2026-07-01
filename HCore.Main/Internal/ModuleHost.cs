@@ -1,5 +1,6 @@
 using HCore.Main.Vfs;
 using HCore.Modules.Base;
+using System.Reflection;
 
 namespace HCore.Main.Internal;
 
@@ -76,8 +77,19 @@ public sealed class ModuleHost : IModuleHost
     /// name) and return it as <typeparamref name="T"/>. Never creates anything —
     /// it only needs the interface because the object already exists.
     /// </summary>
-    public T GetModuleInterface<T>(string instancePath) where T : IModule
+    public T GetModuleInterface<T>(string instancePath) where T : class, IModule
     {
+        // Layer 3 — MKCall: a path that resolves to a RemoteFileSystem is served
+        // by another kernel. Return a marshalling proxy instead of a local instance.
+        // Checked first so a remote path like "/other/proc/lidar" never reaches the
+        // /proc-only InstanceNameFromPath validation below (mirrors the
+        // TryResolveMount redirect in DataHost.Subscribe<T>).
+        if (_vfs.TryResolveMount(instancePath, out var mountFs, out var remotePath)
+            && mountFs is RemoteFileSystem remote)
+        {
+            return RemoteModuleProxy<T>.Create(remote.Client, remotePath);
+        }
+
         var instanceName = InstanceNameFromPath(instancePath);
 
         // Kernel-space singletons (AFCP bridge, etc.) are addressed by a reserved
@@ -373,6 +385,69 @@ public sealed class ModuleHost : IModuleHost
                 ri.InstanceName, ri.Descriptor.Name, ri.Descriptor.FriendlyName,
                 ri.Descriptor.ImplementType, ri.Descriptor.InterfaceType, ri.Instance.DescribeForProc()))
             .ToArray();
+    }
+
+    /// <summary>
+    /// Non-generic instance lookup by /proc path (or bare name) — the
+    /// server-side MKCall path needs the raw <see cref="BaseImplement"/> to
+    /// reflect over, without a compile-time <typeparamref name="T"/>. Accepts
+    /// the same path shapes as <see cref="GetModuleInterface{T}"/> on the local
+    /// side (a serving peer sends the path AS IT SEES IT, e.g. <c>/proc/lidar</c>).
+    /// Kernel-space <c>@</c>-services are intentionally NOT reachable here —
+    /// they are local singletons, not remotely-callable instances.
+    /// </summary>
+    internal bool TryResolveInstance(string instancePath, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out BaseImplement instance)
+    {
+        var name = InstanceNameFromPath(instancePath);
+        lock (_instancesLock)
+        {
+            if (_instances.TryGetValue(name, out var running))
+            {
+                instance = running.Instance;
+                return true;
+            }
+
+            instance = null;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Look up the declared interface <see cref="Type"/> for a registered module by
+    /// its module name. Kernel space (HCore.Main) cannot reference any package
+    /// assembly, so callers like the AFCP self-test that need to drive a typed
+    /// remote proxy for a package-defined interface resolve the <see cref="Type"/>
+    /// here from the already-loaded descriptor registry.
+    /// </summary>
+    internal Type? GetModuleInterfaceType(string moduleName)
+        => _descriptors.FirstOrDefault(d => d.DeclaredDescriptor.Name == moduleName)?.DeclaredDescriptor.InterfaceType;
+
+    /// <summary>
+    /// Build a remote MKCall proxy for a runtime-resolved interface <see cref="Type"/>.
+    /// Used by the AFCP self-test, which cannot name <c>ILidar</c> at compile time
+    /// (HCore.Main has no package references). The proxy is created via reflection
+    /// over the open generic <see cref="RemoteModuleProxy{T}"/>; calls on it are
+    /// dispatched through <c>MethodInfo.Invoke</c>, which virtual-dispatches into
+    /// <see cref="System.Reflection.DispatchProxy"/>'s generated override and so
+    /// reaches <c>RemoteModuleProxy&lt;T&gt;.Invoke</c> — the same path a typed
+    /// call would take.
+    /// </summary>
+    internal object GetRemoteModuleInterface(Type interfaceType, string instancePath)
+    {
+        if (!_vfs.TryResolveMount(instancePath, out var mountFs, out var remotePath)
+            || mountFs is not RemoteFileSystem remote)
+        {
+            throw new InvalidOperationException(
+                $"'{instancePath}' does not resolve to a remote AFCP mount.");
+        }
+
+        // Create is a non-generic method on the open generic RemoteModuleProxy<T>,
+        // so close the TYPE first, then resolve + invoke Create reflectively.
+        var proxyType = typeof(RemoteModuleProxy<>).MakeGenericType(interfaceType);
+        var createMethod = proxyType.GetMethod(
+            nameof(RemoteModuleProxy<IModule>.Create),
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+        return createMethod.Invoke(null, new object[] { remote.Client, remotePath })!;
     }
 
     private LoadedModuleDescriptor FindDescriptor(string moduleName)

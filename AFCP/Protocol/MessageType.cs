@@ -37,6 +37,10 @@ public static class MessageType
     /// <summary>Delete a single file or empty directory. Request: <see cref="RemoveRequest"/>. Response: <see cref="RemoveResponse"/>.</summary>
     public const ushort Remove = 8;
 
+    /// <summary>Invoke a method on a remote module instance (Layer 3 — MKCall proxy).
+    /// Request: <see cref="CallRequest"/>. Response: <see cref="CallResponse"/>.</summary>
+    public const ushort Call = 9;
+
     /// <summary>Notify-only: a pushed data frame for an active subscription.</summary>
     public const ushort Event = 100;
 

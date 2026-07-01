@@ -1,6 +1,9 @@
-# AFCP Layer 3 — MKCall / ModuleProxy (Plan)
+# AFCP Layer 3 — MKCall / ModuleProxy (Design record)
 
-> **Status:** DRAFT PLAN — not yet implemented. Tracks TODO.md §C2 / §C7c.
+> **Status:** IMPLEMENTED & VERIFIED (tracks TODO.md §C2 / §C7c). `afcp test` passes;
+> the Module1/Module2 two-instance demo works (see `docs/afcp/AFCP.md` "Layer 3").
+> This doc is the design record; the authoritative description now lives in
+> [AFCP.md](AFCP.md).
 > **Related:** [AFCP.md](AFCP.md) (Layers 1 & 2), [DATA_PLANE_DESIGN.md](../data-plane/DATA_PLANE_DESIGN.md) Part IX, [V2_V3_COMPARISON.md](../comparison/V2_V3_COMPARISON.md) §4–§5.
 
 ## Goal
@@ -31,10 +34,15 @@ Layer 2 (subscribe-push) is the one non-VFS verb for streams.
 - **`Nullable<T>` value-type args/returns.** The AFCP serializer does not support them
   (AFCP.md:86–89). Use the `long X` + `bool HasX` flag-pair idiom in any `Call` message
   fields, and require callers to avoid `Nullable<T>` in proxied method signatures for now.
-- **IL-emit / `FastMethodInfo` method-index dispatch (V2 optimization).** First cut uses
-  reflection + a `ConcurrentDictionary` method cache server-side. V2 ported a compiled
-  `Expression` delegate per method (`Kernel.AFCP/FastMethod.cs` in the V2 tree) and assigned
-  each interface method a `uint` index; that's a future performance pass.
+- **`FastMethodInfo` method-index dispatch (V2 optimization).** ~~First cut uses
+  reflection + a `ConcurrentDictionary` method cache server-side.~~ **Ported from
+  V2 during this pass** (`HCore.Main/Internal/FastMethodInfo.cs`) — the server-side
+  invoker is a compiled `Expression` delegate per method, cached in a
+  `ConcurrentDictionary<CallKey, FastMethodInfo>`. Method *resolution* (name →
+  `MethodInfo` via `Type.GetType` + `GetMethod`) still happens once per
+  `(type, method, param signature)` on cache miss; the hot path is the compiled
+  delegate, not `MethodInfo.Invoke`. V2's `uint` method *index* was NOT ported
+  (name + param-type names instead — overload-safe, no shared enumeration contract).
 - **Out/ref parameters.** Not supported by the proxy. In/out semantics need a richer
   message; defer.
 
@@ -264,7 +272,39 @@ reference, do not copy verbatim — V3's kernel/user split and ALC model differ)
 |---|---|---|---|
 | Local calls | always proxied | direct dispatch, proxy only for remote paths | V3 design (zero local overhead) |
 | Method ID | `uint` index (shared enumeration) | `MethodName` + `ParamTypeNames` | overload-safe, stateless, no sync contract |
-| Server invoke | `FastMethodInfo` compiled delegate | `MethodInfo.Invoke` + `ConcurrentDictionary` | simplicity first; port later |
+| Server invoke | `FastMethodInfo` compiled delegate | `FastMethodInfo` compiled delegate (ported) | identical mechanism |
 | Args/return wire | `object[] Params` / `object Out` | `object[] Args` / `object? ReturnValue` | identical mechanism (DerivedSerializer) |
 | Local syscall indirection | `MKCallClient`/`MKCallReceiver` + fn-pointer | none | V3's injection model already enforces the split |
+
+---
+
+## Implementation notes (what changed during the pass)
+
+- **`FastMethodInfo` ported immediately**, not deferred — the user asked for it not to
+  be slow despite using strings. Method *resolution* is still string-based
+  (`MethodName` + `ParamTypeNames`), but each resolved method is compiled to a
+  `Expression` delegate and cached; the per-call cost is one dictionary lookup +
+  one delegate invoke, no reflection.
+- **`IModuleHost.GetModuleInterface<T>` gained a `class` constraint.** `DispatchProxy`
+  requires `T : class`; module interfaces are reference types, so this is correct and
+  non-breaking in spirit. Rippled to `EmptyModuleHost`, `ScopedModuleHost`,
+  `ModuleHost`.
+- **Self-test drives the proxy reflectively.** `HCore.Main` cannot reference the
+  `Sensor`/`TestDemo` packages, so `afcp test` resolves `ILidar` via
+  `ModuleHost.GetModuleInterfaceType(moduleName)` and builds the proxy via
+  `ModuleHost.GetRemoteModuleInterface(Type, path)` (reflection over
+  `RemoteModuleProxy<T>.Create`). Calls are dispatched via `MethodInfo.Invoke` on the
+  proxy, which virtual-dispatches into `DispatchProxy`'s generated override — the same
+  wire path as a typed call.
+- **Surfaced + fixed a latent serializer bug:** `StringSerializer`'s deserializer threw
+  `IndexOutOfRangeException` on an empty string (`""`) — `Ldelema` on element 0 of a
+  zero-length body array, the same class of bug as the C7a empty-array fix. Never hit
+  before because existing messages used `null`, never `""`; `CallResponse.Error`
+  defaults to `""`. Fixed in `AFCP/Serializer/Serializers/StringSerializer.cs`.
+- **`RemoteModuleProxy<T>` must not be `sealed`** — `DispatchProxy` generates a derived
+  type at runtime. (V2's `ModuleProxy<T>` was unsealed.)
+- **`object?[] Args` / `object? ReturnValue`** — the serializer handles `object` as a
+  `CanBeDerived` class via `DerivedSerializer` (each value carries its runtime type
+  tag), so mixed-type argument lists and polymorphic returns serialize without a
+  per-arg wrapper. Verified before implementation with a standalone round-trip test.
 

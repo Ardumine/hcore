@@ -116,7 +116,7 @@ internal sealed class EmptyModuleHost : IModuleHost
 {
 	public static EmptyModuleHost Instance { get; } = new();
 
-	public T GetModuleInterface<T>(string instancePath) where T : IModule => throw NotAttached();
+	public T GetModuleInterface<T>(string instancePath) where T : class, IModule => throw NotAttached();
 
 	public T Spawn<T>(string moduleName, string instanceName) where T : IModule => throw NotAttached();
 

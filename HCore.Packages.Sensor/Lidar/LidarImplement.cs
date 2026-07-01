@@ -11,6 +11,7 @@ public sealed class LidarImplement : BaseImplement, ILidar, IRunnable
 {
     private IExposedData<ScanFrame>? _scan;
     private CancellationTokenSource? _cts;
+    private int _frameRateHz = 10;
 
     public void Run()
     {
@@ -18,6 +19,14 @@ public sealed class LidarImplement : BaseImplement, ILidar, IRunnable
         _cts = new CancellationTokenSource();
         _ = Task.Run(() => PublishLoop(_cts.Token));
     }
+
+    // --- ILidar (exercised by the AFCP Layer 3 MKCall self-test) ---
+
+    public void SetFrameRate(int hz) => _frameRateHz = hz;
+
+    public int GetFrameRate() => _frameRateHz;
+
+    public string GetName() => "lidar-demo";
 
     private async Task PublishLoop(CancellationToken ct)
     {

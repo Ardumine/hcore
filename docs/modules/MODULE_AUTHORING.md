@@ -271,6 +271,15 @@ var same = Host.GetModuleInterface<IRunnable>("/proc/worker-a");
 
 > **Where the interface lives matters.** For the cast inside these calls to succeed, the interface type (`IModule1` above) must be the *same* `Type` on both sides. Put shared interfaces in `HCore.Modules.Base` (or another assembly loaded once in the default context); see [ARCHITECTURE.md → Assembly Isolation](../architecture/ARCHITECTURE.md#assembly-isolation) and [DESIGN.md](../architecture/DESIGN.md).
 
+> **Remote calls are transparent (AFCP Layer 3 — MKCall).** If `instancePath`
+> resolves to a remote AFCP mount (e.g. `"/remote/proc/module1"` once you've done
+> `afcp mount … /remote`), `GetModuleInterface<T>` returns a marshalling proxy
+> instead of the local object — the *same* `module1.Func1()` call then round-trips
+> over TCP to the serving peer. Local paths still return the real object
+> (zero-overhead direct dispatch). So the Module1/Module2 snippet above is also a
+> remote-call demo: point Module2's lookup at a mount path and it crosses the wire
+> with no source change. See [AFCP.md](../afcp/AFCP.md) → "Layer 3 — remote method calls".
+
 ## Streaming Data Between Modules (Data Plane)
 
 `Host` is for *calling* a module synchronously. For **streaming live data** — a sensor publishing

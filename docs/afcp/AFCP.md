@@ -2,7 +2,8 @@
 
 > **Status:** Layer 1 (mount + Sync + Read) **implemented & verified**, plus remote
 > VFS writes (Write/MkDir/Remove, §C7a) **and Layer 2 (subscribe-push over the wire,
-> §C7b) implemented & verified**. Layer 3 (MKCall proxy) deferred.
+> §C7b) implemented & verified**. **Layer 3 (MKCall proxy, §C7c) implemented &
+> verified** — `GetModuleInterface<T>(remotePath)` returns a marshalling proxy.
 > **Related:** [DATA_PLANE_DESIGN.md](../data-plane/DATA_PLANE_DESIGN.md) Part IX (the 9P-style
 > mount model), [TODO.md](../TODO.md) §C1, §C7a, §C7b.
 
@@ -28,7 +29,7 @@ through file-read semantics):
 |---|---|---|
 | **1 — Mount/snapshot** | `ls`, `cat`, snapshot `ReadData`, and now `mkdir`/`write`/`rm` over the wire | ✅ done (reads + writes) |
 | **2 — Subscribe-push** | live `Subscribe` event stream, transparent through `Data.Subscribe<T>` | ✅ done |
-| **3 — MKCall proxy** | remote method calls (`GetModuleInterface<T>(remotePath)` → proxy) | ☐ deferred |
+| **3 — MKCall proxy** | remote method calls (`GetModuleInterface<T>(remotePath)` → proxy) | ✅ done |
 
 ---
 
@@ -109,18 +110,20 @@ Path-addressed message types, each a plain serializable class:
 | **Remove** | `RemoveRequest{Path}` → `RemoveResponse{Success, Error}` | Delete a single file or empty directory (no recursion) |
 | **Subscribe** | `SubscribeRequest` → `SubscribeResponse` | Push; server opens a live `DataHost` subscription and streams `Event` frames (Layer 2) |
 | **Unsubscribe** | `UnsubscribeRequest` → empty | Cancel a subscription |
+| **Call** | `CallRequest{InstancePath, MethodName, ParamTypeNames[], object[] Args}` → `CallResponse{Success, Error, object? ReturnValue}` | Invoke a method on a remote instance (Layer 3 — MKCall). `object[]`/`object?` ride the polymorphic `DerivedSerializer` path |
 | **Event** / **ProducerGone** / **SubscriptionError** | Notify-only | Push frames for active subscriptions |
 
 `AfcpServer` accepts connections, runs a `PeerSession` per peer, dispatches
 requests to an `IAfcpProvider` (the host's backing implementation).
 `AfcpClient` connects, runs the handshake, and exposes `SyncAsync`/`ReadAsync`/
-`WriteAsync`/`MkDirAsync`/`RemoveAsync`/`SubscribeAsync`. Subscription pushes
-dispatch to `IAfcpSubscription` handles.
+`WriteAsync`/`MkDirAsync`/`RemoveAsync`/`SubscribeAsync`/`CallAsync`. Subscription
+pushes dispatch to `IAfcpSubscription` handles; `CallAsync` is used by the
+mount-side `RemoteModuleProxy<T>`.
 
 `IAfcpProvider` is the contract a host implements to back a server:
-`Connect`/`Sync`/`Read`/`Write`/`MkDir`/`Remove`/`Subscribe`/`Unsubscribe`. For
-subscriptions the provider receives an `IAfcpSubscriptionSink` to push
-`EventNotify` frames back.
+`Connect`/`Sync`/`Read`/`Write`/`MkDir`/`Remove`/`Subscribe`/`Unsubscribe`/`Call`.
+For subscriptions the provider receives an `IAfcpSubscriptionSink` to push
+`EventNotify` frames back; for `Call` it resolves the instance + method itself.
 
 There is no dedicated `Move` verb: a move/rename over a remote mount is served
 by the mount-side `HCore.Main.Vfs.FileSystem.Move`, which already decomposes
@@ -136,6 +139,14 @@ server-side rename, accepted for this trusted-LAN first cut.
 > empty file (e.g. `touch` over a mount); fixed in
 > `AFCP/Serializer/Serializers/ArraySerializer.cs` by skipping the body write
 > when the array length is 0.
+
+> **Gotcha (fixed):** the string deserializer pinned the body array with
+> `Ldelema` on element 0 for the `string(char*, 0, len)` constructor, which
+> throws `IndexOutOfRangeException` for an empty string (`""`). Never surfaced
+> before because existing messages used `null` (handled by the null-wrapper),
+> never `""`; `CallResponse.Error` defaults to `""`. Fixed in
+> `AFCP/Serializer/Serializers/StringSerializer.cs` by short-circuiting to
+> `string.Empty` when the body length is 0.
 
 ---
 
@@ -199,8 +210,8 @@ Implements `IAfcpProvider` as a **generic VFS proxy** over the kernel `FileSyste
   `Success = false, Error = ex.Message` rather than throwing over the wire — no
   typed error taxonomy yet (§C7d). `DeleteFile` deletes whatever node
   `TryDelete` finds, file or directory, despite the name.
-- **Subscribe** / **Unsubscribe** — the one non-VFS verb (facets aren't files):
-  resolves the facet via `DataHost.FindFacet(path)`, opens a live subscription via
+- **Subscribe** / **Unsubscribe** — the one non-VFS verb for streams (facets aren't
+  files): resolves the facet via `DataHost.FindFacet(path)`, opens a live subscription via
   the non-generic `IFacet.SubscribeRaw`, and streams each frame back as an
   `EventNotify` (value serialized by runtime type via `Serializer.Serialize(stream,
   value, facet.ValueType)`) through the peer's `IAfcpSubscriptionSink`.
@@ -208,6 +219,19 @@ Implements `IAfcpProvider` as a **generic VFS proxy** over the kernel `FileSyste
   subscriptions are tracked per provider (`id → ISubscription`) and disposed on
   `Unsubscribe` or when the connection closes (`PeerSession.DisposeAllSubscriptions`,
   so a dropped link can't leak a server-side subscription).
+- **Call** — the non-VFS verb for RPC (Layer 3 — MKCall; a method call isn't a file):
+  resolves the instance by `CallRequest.InstancePath` via the non-generic
+  `ModuleHost.TryResolveInstance`, reflects the method by `MethodName` +
+  `ParamTypeNames` (cached per `(declaring type, name, param signature)` in a
+  `ConcurrentDictionary<CallKey, FastMethodInfo>` so resolution + IL compilation
+  happen once per method, not per call), and invokes via the compiled `FastMethodInfo`
+  delegate (ported from V2's `Kernel.AFCP.FastMethod.cs`). The boxed return becomes
+  `CallResponse.ReturnValue` (null for void). Any failure (no such instance / method,
+  or a thrown exception) is caught and returned as `Success=false, Error="Type.FullName:
+  Message"` rather than thrown over the wire — same minimalism as `Write`/`MkDir`/
+  `Remove`, no typed error taxonomy yet (§C7d). `@`-prefixed kernel services are
+  deliberately NOT reachable here (they are local singletons, not remotely-callable
+  instances).
 
 This is the key simplification over the earlier facet-metadata design: since the
 kernel `FileSystem` already mounts the live `/proc` alongside everything else,
@@ -247,6 +271,23 @@ invoked concurrently — matching the local single-consumer guarantee. Each
 `EventNotify` is deserialized with the typed `Serializer.Deserialize<T>` (`T` is
 known at the `Subscribe<T>` call site); `ProducerGone`/`SubscriptionError` map to
 `DisconnectReason.ProducerKilled`/`Overload`/`HandlerException` and trip the handle.
+
+**Call (Layer 3).** `RemoteFileSystem` exposes its `AfcpClient` via an internal
+`Client` accessor so the MKCall proxy can round-trip `Call` frames through the same
+connection that already serves this mount's VFS + data traffic — one peer, one
+connection, three layers. The proxy itself (`RemoteModuleProxy<T> : DispatchProxy`,
+`HCore.Main/Vfs/RemoteModuleProxy.cs`) is built by `ModuleHost.GetModuleInterface<T>`
+when `TryResolveMount` resolves the path to a `RemoteFileSystem` (mirroring the
+Layer 2 redirect in `DataHost.Subscribe<T>`). Each method invocation marshals a
+`CallRequest{ InstancePath, MethodName, ParamTypeNames[], object[] Args }` via
+`AfcpClient.CallAsync`; the `CallResponse.ReturnValue` is handed straight back to
+the caller (the proxy already knows from `MethodInfo.ReturnType` whether to expect
+a value, so no void flag is sent). Per-`MethodInfo` signatures are cached so
+reflection happens once per method, not per call. Invocation is synchronous
+(module interface methods are synchronous in V3); the proxy blocks on the response
+with `CancellationToken.None` (no mux-level timeout — §C7f). Failure on the peer
+surfaces as a `RemoteCallException` (in `HCore.Modules.Base`, catchable by user
+space).
 
 ### DataHost accessors (used by Layer 2)
 `DataHost.FindFacet(path)` returns the non-generic `IFacet` for a facet path; the
@@ -385,7 +426,76 @@ Cleanup — instance **A**: `kill rslam` then `afcp unmount /other`; instance **
 `afcp stop`.
 
 > The `afcp test` command runs this entire Layer 1 + Layer 2 sequence as a loopback
-> self-test inside a single instance (no second terminal needed).
+> self-test inside a single instance (no second terminal needed), and now also
+> exercises Layer 3 (MKCall) — see below.
+
+### Layer 3 — remote method calls (§C7c)
+
+A remote method call is driven by a *module*, not a shell command: the caller does
+`Host.GetModuleInterface<T>("/other/proc/<instance>")` and the returned proxy
+marshals each method invocation over AFCP. The canonical demo is
+`HCore.Packages.TestDemo` Module1/Module2 — Module2's
+`Host.GetModuleInterface<IModule1>(target).Func1()` works whether `target` is
+`/proc/module1` (local, direct dispatch) or `/remote/proc/module1` (remote mount,
+MKCall proxy). The target is read from `/tmp/module2_target` (defaulting to
+`/proc/module1`), mirroring `RemoteSlam`'s subscribe-target hook.
+
+On instance **B** (owns Module1, serves):
+```
+spawn HCore.Modules.TestDemo.Module1 module1      # Module1 isn't IRunnable — just spawn it
+afcp serve 8000
+```
+
+On instance **A** (mounts B, runs Module2):
+```
+afcp mount 127.0.0.1 8000 /remote
+write /tmp/module2_target /remote/proc/module1
+spawn HCore.Modules.TestDemo.Module2 module2
+run module2                                          # A: "Ran Module 2! (calling /remote/proc/module1)"
+                                                     # B: "Func1 was called!"  (the marshalled call)
+```
+
+Drop `/tmp/module2_target` (or point it at `/proc/module1`) and the very same
+Module2 code calls a *local* Module1 — `GetModuleInterface<T>` returns the actual
+object, no proxy, zero overhead. That's the location-transparency hook: remoteness
+is a path prefix, never a code change.
+
+> The `afcp test` self-test exercises Layer 3 reflectively in one loopback instance
+> (`ModuleHost.GetRemoteModuleInterface(Type, path)` + `MethodInfo.Invoke` on the
+> proxy), because `HCore.Main` cannot reference the `Sensor`/`TestDemo` packages.
+> The wire path is identical to a compile-time-typed call.
+
+---
+
+## Layer 3 (MKCall) limitations
+
+- **AFCP-serializable args/returns.** Every argument and return type must be
+  AFCP-serializable (unmanaged struct / string / Guid / array / `List<T>` /
+  `Dictionary<,>` / a class with a parameterless ctor + public get/set props).
+  `Nullable<T>` value types are NOT supported (use the `long`+`bool HasX` flag-pair
+  idiom if a nullable value must cross the wire).
+- **Both peers must have the type loaded.** `DerivedSerializer` writes the
+  assembly-qualified name; the server resolves arg/param/return types via
+  `Type.GetType`. Contract types in `HCore.Modules.Base` resolve (shared identity
+  across ALCs); custom arg/return types in a package assembly must be loaded on both
+  peers — same constraint Layer 2 imposes on facet value types.
+- **No out/ref parameters.** The proxy does not marshal them.
+- **No exception-type reconstruction.** Server-side exceptions surface as
+  `CallResponse{Success=false, Error="Type.FullName: Message"}`; the proxy throws
+  `RemoteCallException` carrying that string. Original exception type is lost
+  (§C7d territory).
+- **No capability check (§C3).** A mounting peer can call any public method on any
+  served instance — same trusted-LAN gap as remote writes and `Kill`.
+- **No call timeout / reconnect (§C7f).** The proxy uses `CancellationToken.None`
+  and blocks synchronously; a silently-dead peer hangs a caller until TCP gives up.
+- **Implicit interface implementation only.** `GetMethod` resolves public instance
+  methods on `instance.GetType()` by name + param types; explicit interface
+  implementations (`void IFoo.Bar()`) are not found. Module interface methods are
+  conventionally implicit.
+- **The shell can't drive arbitrary calls.** `afcp` is string-based and the shell
+  can't bind method arguments by type, so a typed MKCall is exercised by a *module*
+  (Module1/Module2), not a shell command. The one shell path that crosses Layer 3 is
+  `run /remote/proc/<instance>` (it calls `GetModuleInterface<IRunnable>(path).Run()`).
 
 ---
 
@@ -445,16 +555,22 @@ command needs no changes.
 | `AFCP/AfcpServer.cs` / `AfcpClient.cs` | Server + client |
 | `AFCP/IAfcpProvider.cs` | Host backing contract + subscription sink |
 | `HCore.Modules.Base/IAfcpKernel.cs` | Shell-facing bridge contract (string-based) |
-| `HCore.Main/Internal/AfcpKernelService.cs` | `IAfcpKernel` impl + `VfsAfcpProvider` (generic VFS proxy + Layer 2 `Subscribe`) |
-| `HCore.Main/Vfs/RemoteFileSystem.cs` | Mount-side lazy read-write VFS + `IRemoteDataSource.SubscribeData<T>` + `RemoteSubscription<T>` |
-| `HCore.Main/Internal/ModuleHost.cs` | Kernel-service registry (`@`-prefixed names) |
+| `HCore.Main/Internal/AfcpKernelService.cs` | `IAfcpKernel` impl + `VfsAfcpProvider` (generic VFS proxy + Layer 2 `Subscribe` + Layer 3 `Call`) |
+| `HCore.Main/Vfs/RemoteFileSystem.cs` | Mount-side lazy read-write VFS + `IRemoteDataSource.SubscribeData<T>` + `RemoteSubscription<T>` + `Client` accessor (Layer 3) |
+| `HCore.Main/Vfs/RemoteModuleProxy.cs` | **Layer 3** — `RemoteModuleProxy<T> : DispatchProxy` (marshals method calls over `Call`) |
+| `HCore.Main/Internal/FastMethodInfo.cs` | Compiled `Expression` delegate per `MethodInfo` (ported from V2; server-side MKCall fast path) |
+| `HCore.Main/Internal/ModuleHost.cs` | Kernel-service registry (`@`-prefixed names); `TryResolveMount` branch in `GetModuleInterface<T>` (Layer 3); `TryResolveInstance` (non-generic); `GetRemoteModuleInterface(Type, path)` (self-test) |
+| `HCore.Modules.Base/RemoteCallException.cs` | Thrown by the MKCall proxy on a remote failure (catchable by user space) |
 | `HCore.Main/Internal/DataHost.cs` | `FindFacet`; `IFacet.SubscribeRaw`; `FileSystem` ref + remote branch in `Subscribe<T>` |
 | `HCore.Main/Internal/DataFacet.cs` | `Facet<T>.SubscribeRaw` (non-generic subscribe wrapping the typed path) |
 | `HCore.Main/Vfs/FileSystem.cs` | Added `Unmount`; `TryResolveMount` (mount + peer-relative path) |
-| `AFCP/AfcpServer.cs` | `PeerSession.DisposeAllSubscriptions` on connection close (leak fix) |
+| `AFCP/AfcpServer.cs` | `PeerSession.DisposeAllSubscriptions` on connection close (leak fix); `Call` dispatch case |
+| `AFCP/AfcpClient.cs` | `CallAsync(CallRequest, ct)` round-trip (Layer 3) |
+| `HCore.Packages.TestDemo/Module2/Module2Implement.cs` | Reads MKCall target from `/tmp/module2_target` (local-vs-remote demo) |
 | `HCore.Packages.Sensor/RemoteSlam/` | Demo consumer for the transparent remote-subscribe path |
 | `HCore.Packages.Sensor/ScanFrame.cs` | Added parameterless ctor (required to AFCP-serialize the value) |
 | `AFCP/Serializer/Serializers/ArraySerializer.cs` | Fixed zero-length unmanaged-array serialize (§C7a fallout) |
+| `AFCP/Serializer/Serializers/StringSerializer.cs` | Fixed zero-length (empty-string) deserialize — `Ldelema` on element 0 of an empty body array (§C7c fallout) |
 | `AFCP/Transport/TcpConnection.cs` | Sets `TcpClient.NoDelay = true` (fixed Nagle/delayed-ACK latency) |
 | `HCore.Packages.HShell/Shell/Commands/AfcpCommand.cs` | `afcp` shell command |
 | `FS/etc/services/sensor.svc` | Spawns + runs the lidar demo |

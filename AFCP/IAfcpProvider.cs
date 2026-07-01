@@ -23,6 +23,15 @@ public interface IAfcpProvider
     RemoveResponse Remove(RemoveRequest request);
     SubscribeResponse Subscribe(SubscribeRequest request, IAfcpSubscriptionSink sink);
     void Unsubscribe(ulong subscriptionId);
+
+    /// <summary>
+    /// Invoke a method on a module instance (Layer 3 — MKCall). The provider
+    /// resolves the instance by <see cref="CallRequest.InstancePath"/>, reflects
+    /// the method by name + parameter types, invokes it, and boxes the return.
+    /// Failures (no such instance / method, or a thrown exception) come back as
+    /// <see cref="CallResponse.Success"/>=false with an <see cref="CallResponse.Error"/> string.
+    /// </summary>
+    CallResponse Call(CallRequest request);
 }
 
 /// <summary>

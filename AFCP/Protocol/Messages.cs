@@ -136,3 +136,45 @@ public sealed class SubscriptionErrorNotify
     public ulong SubscriptionId { get; set; }
     public string? Reason { get; set; }
 }
+
+// --- Call (Layer 3 — MKCall proxy) ---
+
+/// <summary>
+/// Invoke a method on a remote module instance. The path identifies the instance
+/// as the SERVING peer sees it (mount prefix already stripped, e.g.
+/// <c>/proc/lidar</c>). <see cref="MethodName"/> + <see cref="ParamTypeNames"/>
+/// identify the method (overload-safe — no shared method-index contract, unlike
+/// V2). <see cref="Args"/> rides the serializer's polymorphic <c>object[]</c>
+/// path: each element carries its own runtime type tag, so mixed-type argument
+/// lists serialize without a per-arg wrapper.
+/// </summary>
+public sealed class CallRequest
+{
+    /// <summary>Instance path on the serving peer, e.g. <c>/proc/lidar</c> or a bare name.</summary>
+    public string InstancePath { get; set; } = string.Empty;
+
+    public string MethodName { get; set; } = string.Empty;
+
+    /// <summary>Assembly-qualified names of the method's declared parameter types (overload disambiguation).</summary>
+    public string[] ParamTypeNames { get; set; } = Array.Empty<string>();
+
+    /// <summary>One element per parameter, polymorphic (DerivedSerializer path). Empty for no-arg methods.</summary>
+    public object?[] Args { get; set; } = Array.Empty<object?>();
+}
+
+/// <summary>
+/// The outcome of a remote method call. <see cref="ReturnValue"/> is the boxed
+/// return value (null for void methods, null reference returns, or failures);
+/// the proxy already knows from <see cref="System.Reflection.MethodInfo.ReturnType"/>
+/// whether to expect a value, so the response carries no separate void flag.
+/// </summary>
+public sealed class CallResponse
+{
+    public bool Success { get; set; }
+
+    /// <summary><c>"Type.FullName: Message"</c> when <see cref="Success"/> is false.</summary>
+    public string Error { get; set; } = string.Empty;
+
+    /// <summary>Serialized return value (polymorphic), or null. Ignored when <see cref="Success"/> is false.</summary>
+    public object? ReturnValue { get; set; }
+}

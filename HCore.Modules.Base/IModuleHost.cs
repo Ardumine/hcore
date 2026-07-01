@@ -25,7 +25,7 @@ public interface IModuleHost
     /// <exception cref="System.InvalidOperationException">
     /// Nothing is running at that path, or the instance does not implement <typeparamref name="T"/>.
     /// </exception>
-    T GetModuleInterface<T>(string instancePath) where T : IModule;
+    T GetModuleInterface<T>(string instancePath) where T : class, IModule;
 
     /// <summary>
     /// Create a NEW instance of <paramref name="moduleName"/> under the chosen

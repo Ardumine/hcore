@@ -54,6 +54,14 @@ internal sealed class RemoteFileSystem : IVirtualFileSystem, IDisposable, IRemot
     public bool IsReadOnly => false;
     public string RemoteEndpoint { get; }
 
+    /// <summary>
+    /// The client backing this mount — exposed (internal) so the MKCall proxy
+    /// (<see cref="RemoteModuleProxy{T}"/>) can round-trip <c>Call</c> requests
+    /// through the same connection that already serves this mount's VFS + data
+    /// traffic. One peer, one connection, three layers.
+    /// </summary>
+    internal AfcpClient Client => _client;
+
     public RemoteFileSystem(AfcpClient client, string mountPoint, Serializer serializer)
     {
         _client = client;

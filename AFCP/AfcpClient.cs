@@ -92,6 +92,19 @@ public sealed class AfcpClient : IDisposable
     }
 
     /// <summary>
+    /// Invoke a method on a remote module instance (Layer 3 — MKCall). The proxy
+    /// (<c>RemoteModuleProxy&lt;T&gt;</c> on the mount side) builds the
+    /// <see cref="CallRequest"/> from the invoked <see cref="System.Reflection.MethodInfo"/>
+    /// and routes it through here. Synchronous from the caller's view: the proxy
+    /// blocks on the response (module interface methods are synchronous in V3).
+    /// </summary>
+    public Task<CallResponse> CallAsync(CallRequest request, CancellationToken ct = default)
+    {
+        EnsureConnected();
+        return RoundTripAsync<CallRequest, CallResponse>(MessageType.Call, request, ct);
+    }
+
+    /// <summary>
     /// Subscribe to push events for <paramref name="path"/>. Returns a handle whose
     /// <see cref="IAfcpSubscription.State"/> is always observable; the callbacks are optional.
     /// </summary>
