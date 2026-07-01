@@ -9,9 +9,10 @@
 
 ## Current state of the code
 
-The source is clean — only **two** real TODOs remain:
+The source is clean — only **one** real TODO remains:
 
-- `HCore.Main/Program.cs:81` — `//Todo: Handle if mpd does not exist` (modpack descriptor missing).
+- ✅ `HCore.Main/Program.cs` — missing `mpd` descriptor now handled (skip + clear warning, no
+  empty-file side effect). Resolved 1/07/2026.
 - `HCore.Modules.Base/IModuleHost.cs:86` — `Kill` capability gap (documented; needs the capability model).
 
 Services are built (`FS/etc/services/*.svc`, `ServiceCommand.cs`, init boots them). Shell has
@@ -128,7 +129,8 @@ Design work remains; these are additive layers on top of §A, not blockers for t
 
 ## Existing source TODOs (small, standalone)
 
-- ☐ `HCore.Main/Program.cs:81` — handle missing `mpd` file gracefully (currently warns/skips imperfectly).
+- ✅ `HCore.Main/Program.cs` — missing `mpd` file now handled gracefully (`_vfs.Exists` guard +
+  `FileMode.Open`/`FileAccess.Read`; skip with named warning, no empty-file side effect).
 - ☐ `HCore.Modules.Base/IModuleHost.cs:86` — `Kill` capability gap → resolved by C3 (capability model).
 
 ---

@@ -79,8 +79,14 @@ internal static class Program
             string? pdbName = null;
 
             //mpd: mod pack descriptor
-            //Todo: Handle if mpd does not exist
-            using (var fileStream = _vfs.OpenFileStream(Path.Join(dir.Path, "mpd")))
+            var mpdPath = Path.Join(dir.Path, "mpd");
+            if (!_vfs.Exists(mpdPath))
+            {
+                _kernelLog.W($"Skipping pack '{new DirectoryInfo(dir.Path).Name}': missing mpd descriptor");
+                continue;
+            }
+
+            using (var fileStream = _vfs.OpenFileStream(mpdPath, FileMode.Open, FileAccess.Read))
             using (var streamReader = new StreamReader(fileStream))
             {
 
@@ -102,10 +108,6 @@ internal static class Program
                 try
                 {
                     pdbName = streamReader.ReadLine();
-                    if (string.IsNullOrEmpty(dllName))
-                    {
-                        _kernelLog.W("Warning: pdb name is null");
-                    }
                 }
                 catch (Exception e)
                 {
