@@ -19,6 +19,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Packages.HShell", "HC
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Packages.Sensor", "HCore.Packages.Sensor\HCore.Packages.Sensor.csproj", "{F8369483-5998-45E3-9344-D385EFF5037E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AFCP", "AFCP\AFCP.csproj", "{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -125,6 +127,18 @@ Global
 		{F8369483-5998-45E3-9344-D385EFF5037E}.Release|x64.Build.0 = Release|Any CPU
 		{F8369483-5998-45E3-9344-D385EFF5037E}.Release|x86.ActiveCfg = Release|Any CPU
 		{F8369483-5998-45E3-9344-D385EFF5037E}.Release|x86.Build.0 = Release|Any CPU
+		{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}.Debug|x64.Build.0 = Debug|Any CPU
+		{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}.Debug|x86.Build.0 = Debug|Any CPU
+		{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}.Release|x64.ActiveCfg = Release|Any CPU
+		{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}.Release|x64.Build.0 = Release|Any CPU
+		{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}.Release|x86.ActiveCfg = Release|Any CPU
+		{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
