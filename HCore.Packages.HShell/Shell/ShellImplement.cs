@@ -32,6 +32,7 @@ public class ShellImplement : BaseImplement, IShell
         Console.WriteLine("Type 'help' to list commands. Type 'exit' to quit.");
 
         ReadLine.HistoryEnabled = true;
+        ReadLine.AutoCompletionHandler = new AutoCompletionHandler(_registry, Vfs);
 
         Vfs.SetWorkingDirectory("/");
 
