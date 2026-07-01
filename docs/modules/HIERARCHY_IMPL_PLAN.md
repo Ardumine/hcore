@@ -2,7 +2,7 @@
 
 ## Context
 
-HCore V3 stalled on two intertwined questions: how a module owns **sub-modules**, and how modules live in the **VFS**. After a full design debate (recorded in `docs/MODULE_HIERARCHY.md`), **approach D** was chosen: a parent module owns real, stateful child module instances that appear at `/proc/<parent>/<child>`, are created by the parent (which passes their data), are callable from anywhere, and whose lifetime is **structurally coupled** to the parent (destroy parent → children reaped by the kernel). The author writes ~one verb; the kernel does the wiring. This is the shape the 2nd iteration (`Ardumine/kernel`) reached for but only half-built (its code logs "parent didn't stop/delete its child, doing it manually" — the failure D eliminates).
+HCore V3 stalled on two intertwined questions: how a module owns **sub-modules**, and how modules live in the **VFS**. After a full design debate (recorded in `docs/modules/MODULE_HIERARCHY.md`), **approach D** was chosen: a parent module owns real, stateful child module instances that appear at `/proc/<parent>/<child>`, are created by the parent (which passes their data), are callable from anywhere, and whose lifetime is **structurally coupled** to the parent (destroy parent → children reaped by the kernel). The author writes ~one verb; the kernel does the wiring. This is the shape the 2nd iteration (`Ardumine/kernel`) reached for but only half-built (its code logs "parent didn't stop/delete its child, doing it manually" — the failure D eliminates).
 
 Two choices confirmed with the user:
 - **`/proc/<child>/info` shows the module's own data** (e.g. a USB device's serial + location) via a small author hook.

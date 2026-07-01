@@ -81,7 +81,7 @@ Host.Spawn<IRunnable>("HCore.Packages.TestDemo.Module2", "worker-a").Run();
 Host.Kill("/proc/worker-a"); // privileged: reaps the instance and any children it owns
 ```
 
-The **path identifies _who_** you talk to; the **method call is _what_** you say; the **return value is data**. This separation is the heart of the design — see [DESIGN.md](docs/DESIGN.md).
+The **path identifies _who_** you talk to; the **method call is _what_** you say; the **return value is data**. This separation is the heart of the design — see [DESIGN.md](docs/architecture/DESIGN.md).
 
 There are three levels: a **pack** (`/packs/<pack>/`, installed code), a **module** (a program defined by a descriptor inside the pack), and an **instance** (a running module, listed in `/proc/<name>/`).
 
@@ -101,7 +101,7 @@ public sealed class UsbModuleImplement : ContainerImplement, IUsb, IRunnable
 }
 ```
 
-See [MODULE_HIERARCHY.md](docs/MODULE_HIERARCHY.md) for the full design and [MODULE_AUTHORING.md](docs/MODULE_AUTHORING.md) for a walkthrough.
+See [MODULE_HIERARCHY.md](docs/modules/MODULE_HIERARCHY.md) for the full design and [MODULE_AUTHORING.md](docs/modules/MODULE_AUTHORING.md) for a walkthrough.
 
 ### The `mpd` File
 
@@ -114,13 +114,13 @@ MyPackage.pdb
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) — Boot sequence, VFS internals, assembly loading, the module host, kernel/user-space & system calls, module hierarchy mechanics
-- [Design & Rationale](docs/DESIGN.md) — Why HCore is shaped this way: the core design questions, answered
-- [Data Plane Guide](docs/DATA_PLANE.md) — Expose, stream, and consume live data facets (cell/stream, dispatch, breaker, `cat`)
-- [Module Hierarchy](docs/MODULE_HIERARCHY.md) — The sub-module design debate, chosen approach, and implementation notes
-- [Module Authoring Guide](docs/MODULE_AUTHORING.md) — How to create your own modules (and call others, and own children)
-- [Shell Guide](docs/SHELL.md) — Shell commands and the `/etc/services` service model
-- [API Reference](docs/API_REFERENCE.md) — Interface and class documentation
+- [Architecture](docs/architecture/ARCHITECTURE.md) — Boot sequence, VFS internals, assembly loading, the module host, kernel/user-space & system calls, module hierarchy mechanics
+- [Design & Rationale](docs/architecture/DESIGN.md) — Why HCore is shaped this way: the core design questions, answered
+- [Data Plane Guide](docs/data-plane/DATA_PLANE.md) — Expose, stream, and consume live data facets (cell/stream, dispatch, breaker, `cat`)
+- [Module Hierarchy](docs/modules/MODULE_HIERARCHY.md) — The sub-module design debate, chosen approach, and implementation notes
+- [Module Authoring Guide](docs/modules/MODULE_AUTHORING.md) — How to create your own modules (and call others, and own children)
+- [Shell Guide](docs/shell/SHELL.md) — Shell commands and the `/etc/services` service model
+- [API Reference](docs/architecture/API_REFERENCE.md) — Interface and class documentation
 
 ## License
 

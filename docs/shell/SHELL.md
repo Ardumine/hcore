@@ -116,11 +116,11 @@ killed '/proc/usb'
 usb: Stopped
 ```
 
-`spawn` takes a module's **descriptor `Name`** plus an instance name and creates the instance but does **not** run it. `run` takes the `/proc` path (or bare name) of an **already-spawned** instance and runs it. `kill` is privileged: it works on any instance by path, not just ones you own. See [MODULE_HIERARCHY.md](MODULE_HIERARCHY.md) for the full hierarchy/cascade design and [MODULE_AUTHORING.md](MODULE_AUTHORING.md) to build your own module.
+`spawn` takes a module's **descriptor `Name`** plus an instance name and creates the instance but does **not** run it. `run` takes the `/proc` path (or bare name) of an **already-spawned** instance and runs it. `kill` is privileged: it works on any instance by path, not just ones you own. See [MODULE_HIERARCHY.md](../modules/MODULE_HIERARCHY.md) for the full hierarchy/cascade design and [MODULE_AUTHORING.md](../modules/MODULE_AUTHORING.md) to build your own module.
 
 ## AFCP — remote data plane
 
-The `afcp` command drives the kernel-space AFCP bridge, exposing the local root (`/proc`, `/etc`, `/dev`, `/packs`, ...) over TCP and mounting remote peers' trees as read-write VFS mounts (9P-style: remoteness is a path prefix). Both sides use ordinary VFS commands — `ls`/`cat`/`mkdir`/`write`/`rm`/`mv`/etc. all work across a mount, no AFCP-specific verbs. It reaches the bridge through the shared `IAfcpKernel` interface (a `GetModuleInterface<IAfcpKernel>("@afcp")` lookup), so the shell package has no AFCP reference. There is no capability model yet — a mounting peer can write anywhere under the served root. Full design and the standalone `AFCP/` protocol library are documented in [AFCP.md](AFCP.md).
+The `afcp` command drives the kernel-space AFCP bridge, exposing the local root (`/proc`, `/etc`, `/dev`, `/packs`, ...) over TCP and mounting remote peers' trees as read-write VFS mounts (9P-style: remoteness is a path prefix). Both sides use ordinary VFS commands — `ls`/`cat`/`mkdir`/`write`/`rm`/`mv`/etc. all work across a mount, no AFCP-specific verbs. It reaches the bridge through the shared `IAfcpKernel` interface (a `GetModuleInterface<IAfcpKernel>("@afcp")` lookup), so the shell package has no AFCP reference. There is no capability model yet — a mounting peer can write anywhere under the served root. Full design and the standalone `AFCP/` protocol library are documented in [AFCP.md](../afcp/AFCP.md).
 
 ```
 / $ service start sensor        # start the lidar demo (exposes /proc/lidar/scan_data)

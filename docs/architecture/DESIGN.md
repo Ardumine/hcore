@@ -1,6 +1,6 @@
 # HCore — Design & Rationale
 
-This document captures the *why* behind HCore: the questions that shaped the design and the answers the implementation settled on. It complements [ARCHITECTURE.md](ARCHITECTURE.md) (the *how*) and the [Module Authoring Guide](MODULE_AUTHORING.md) (the *do*).
+This document captures the *why* behind HCore: the questions that shaped the design and the answers the implementation settled on. It complements [ARCHITECTURE.md](ARCHITECTURE.md) (the *how*) and the [Module Authoring Guide](../modules/MODULE_AUTHORING.md) (the *do*).
 
 ## What is HCore?
 
@@ -101,7 +101,7 @@ Built: **approach D — the parent is a host for its own subtree.** A parent ext
 
 Why D over the alternatives (host-managed flat keys / owned-and-served pull / returned handles): only D makes lifetime-coupling a *kernel guarantee* while keeping children real, stateful, and `/proc`-addressable — and it yields the *simplest* author code (one verb; the complexity lives in the kernel, paid once). The 2nd iteration (`Ardumine/kernel`) built the flat-keys-with-an-edge variant, and its own logs document the failures D removes (orphaned children, spawn-then-init, unenforced ownership).
 
-Note: `expose` (which members a module publishes) and `sub-modules` (child instances it owns) are kept strictly separate. Full spec, build plan, acceptance criteria, the four-way debate, and implementation notes: see **[MODULE_HIERARCHY.md](MODULE_HIERARCHY.md)**; kernel mechanics in **[ARCHITECTURE.md → Module Hierarchy](ARCHITECTURE.md#module-hierarchy--sub-modules)**.
+Note: `expose` (which members a module publishes) and `sub-modules` (child instances it owns) are kept strictly separate. Full spec, build plan, acceptance criteria, the four-way debate, and implementation notes: see **[MODULE_HIERARCHY.md](../modules/MODULE_HIERARCHY.md)**; kernel mechanics in **[ARCHITECTURE.md → Module Hierarchy](ARCHITECTURE.md#module-hierarchy--sub-modules)**.
 
 ## Future work (designed, not yet built)
 

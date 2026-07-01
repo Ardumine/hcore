@@ -103,7 +103,7 @@ Abstract base class that all module implementations must extend. Provides the fo
 | `AttachInstanceName(name)` | Called by the kernel at creation, exactly like `AttachVfs`/`AttachHost`. |
 | `Logger` | Structured logger injected by the kernel; description = instance name. Defaults to a no-op logger. |
 | `AttachLogger(logger)` | Called by the kernel at creation, exactly like `AttachVfs`/`AttachHost`. |
-| `OnKilled()` | Called by the kernel when this instance is reaped — killed directly, or as part of a parent's cascade. Override to release resources; default is a no-op. Runs *after* the kernel releases its process-table lock (and after `DataHost.NotifyProducerKilled` fires `ProducerKilled` to the reaped instance's subscribers), leaf-first across a cascade. `protected internal` — see [Module Hierarchy](MODULE_HIERARCHY.md) for why only the kernel or a subclass can call it. |
+| `OnKilled()` | Called by the kernel when this instance is reaped — killed directly, or as part of a parent's cascade. Override to release resources; default is a no-op. Runs *after* the kernel releases its process-table lock (and after `DataHost.NotifyProducerKilled` fires `ProducerKilled` to the reaped instance's subscribers), leaf-first across a cascade. `protected internal` — see [Module Hierarchy](../modules/MODULE_HIERARCHY.md) for why only the kernel or a subclass can call it. |
 | `DescribeForProc()` | Module-authored extra lines shown in this instance's `/proc/<name>/info` (e.g. a device's serial/location). Default `null` (no extra lines). Same access as `OnKilled()`. |
 
 **Usage:** Module authors extend this class and use `Vfs`, `Host`, `Data`, and `Logger`. The kernel calls the `Attach*` methods before invoking any module methods. Override `OnKilled()`/`DescribeForProc()` only if your module needs cleanup or wants extra `/proc` info — most authors extend `ContainerImplement` instead of `BaseImplement` when they need children.
@@ -123,7 +123,7 @@ public abstract class ContainerImplement : BaseImplement
 }
 ```
 
-Base class for a module that owns child module instances (Design D — see [Module Hierarchy](MODULE_HIERARCHY.md)). Extend this instead of `BaseImplement` when your module needs to spawn stateful children that appear nested under it in `/proc`, with lifetime structurally coupled to it.
+Base class for a module that owns child module instances (Design D — see [Module Hierarchy](../modules/MODULE_HIERARCHY.md)). Extend this instead of `BaseImplement` when your module needs to spawn stateful children that appear nested under it in `/proc`, with lifetime structurally coupled to it.
 
 | Member | Description |
 |--------|-------------|
@@ -170,7 +170,7 @@ The process / IPC "system-call" surface. Implemented by the kernel (`ModuleHost`
 |--------|-------------|
 | `Spawn<T>(moduleName, instanceName)` | **Creates** a new top-level named instance of a module (like `exec`), registered at `/proc/<instanceName>` but **not** run. This is the only operation that resolves the concrete implementation type by NAME (via the descriptor registry). The same module may be spawned many times. Throws if the module name is unknown, the instance name is already in use, or contains `/`. |
 | `GetModuleInterface<T>(instancePath)` | **Looks up** an already-running instance by its `/proc` path (e.g. `"/proc/module1"`; a bare name like `"module1"` is also accepted) and returns it as `T`. It **never creates** anything — a caller holding only an interface plus a path cannot construct anything, and lookup needs only the interface because the object already exists. Throws if nothing is running at that path or the instance does not implement `T`. |
-| `SpawnChild<TImpl>(leafName, init)` | Creates a CHILD of the calling module, resolved by concrete implementation type. Runs `init` before the child is published — never observable half-built. Appears at `/proc/<owner>/<leafName>`; destroying the owner structurally reaps it. Most authors call `ContainerImplement.SpawnChild` instead of this directly. See [Module Hierarchy](MODULE_HIERARCHY.md). |
+| `SpawnChild<TImpl>(leafName, init)` | Creates a CHILD of the calling module, resolved by concrete implementation type. Runs `init` before the child is published — never observable half-built. Appears at `/proc/<owner>/<leafName>`; destroying the owner structurally reaps it. Most authors call `ContainerImplement.SpawnChild` instead of this directly. See [Module Hierarchy](../modules/MODULE_HIERARCHY.md). |
 | `SpawnChildByName<T>(moduleName, leafName, init)` | Cross-package escape hatch for `SpawnChild`: creates a child by module NAME instead of concrete type, returning the child's interface (which must therefore live in a shared contract assembly). |
 | `KillChild(leafName)` | Kills a child OF THE CALLING module. Owner-scoped — throws if `leafName` is not actually this module's child. Cascades to the child's own descendants, leaf-first. |
 | `Kill(instancePath)` | Privileged cascade kill of ANY instance by `/proc` path, regardless of ownership. Reaps the target and every transitive descendant, leaf-first. No capability model exists yet, so this is intentionally unrestricted — the shell's `kill` command uses it. |
@@ -278,8 +278,8 @@ A thread-safe producer-consumer signaling queue for inter-module communication. 
 The data-plane "system call" surface — a module's door for exposing its own data facets and
 reading/subscribing to other modules' facets. Implemented by the kernel (`DataHost`) and injected
 into each module as `BaseImplement.Data` (in practice a `ScopedDataHost` bound to the instance's own
-name). See [Data Plane Guide](DATA_PLANE.md) for the full guide and the
-[design rationale](DATA_PLANE_DESIGN.md).
+name). See [Data Plane Guide](../data-plane/DATA_PLANE.md) for the full guide and the
+[design rationale](../data-plane/DATA_PLANE_DESIGN.md).
 
 ---
 
@@ -437,7 +437,7 @@ public enum DisconnectReason { Overload, HandlerException, ProducerKilled, Dispo
 `DisconnectReason` distinguishes the three breaker trip causes (plus intentional dispose):
 `Overload` (sustained queue overflow, stream only) / `HandlerException` (cell: one-strike; stream:
 sustained throws) / `ProducerKilled` (the producing instance was reaped). All three funnel into the
-same disconnect path. See [Data Plane Guide → Circuit breaker](DATA_PLANE.md#the-circuit-breaker).
+same disconnect path. See [Data Plane Guide → Circuit breaker](../data-plane/DATA_PLANE.md#the-circuit-breaker).
 
 ---
 

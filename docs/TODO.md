@@ -1,8 +1,8 @@
 # HCore — Implementation TODO
 
 > **Generated:** 1/07/2026, 17:40
-> **Source of truth for the data plane design:** [DATA_PLANE_DESIGN.md](DATA_PLANE_DESIGN.md)
-> **§B micro-decisions (settled 1/07/2026):** [DATA_PLANE_DECISIONS.md](DATA_PLANE_DECISIONS.md)
+> **Source of truth for the data plane design:** [DATA_PLANE_DESIGN.md](data-plane/DATA_PLANE_DESIGN.md)
+> **§B micro-decisions (settled 1/07/2026):** [DATA_PLANE_DECISIONS.md](data-plane/DATA_PLANE_DECISIONS.md)
 > **Status conventions:** ☐ not started · ◻ micro-decision needed first · ✱ design pending · ⏸ deferred · ✅ done
 
 ---
@@ -18,7 +18,7 @@ The source is clean — only **one** real TODO remains:
 Services are built (`FS/etc/services/*.svc`, `ServiceCommand.cs`, init boots them). Shell has
 FileSystem / Help / Process / Service / **AFCP** commands. **The local data plane (§A) is
 implemented and verified.** **AFCP Layer 1 (§C1) — remote mounts + Sync + Read — is implemented
-and verified** via the `afcp test` loopback self-test (see [AFCP.md](AFCP.md)). **§C7a — remote
+and verified** via the `afcp test` loopback self-test (see [AFCP.md](afcp/AFCP.md)). **§C7a — remote
 VFS writes (Write/MkDir/Remove) — is implemented and verified**, same self-test plus a manual
 loopback shell check (`mkdir`/`write`/`append`/`cat`/`mv`/`touch`/`rm`/`rmdir` through a mounted
 peer). Move/rename works over a remote mount by composing the existing `Write`+`MkDir`+`Remove`
@@ -59,7 +59,7 @@ All six settled 1/07/2026; each informed §A:
 
 ## A. The local data plane — IMPLEMENTED & VERIFIED
 
-Everything in [DATA_PLANE_DESIGN.md](DATA_PLANE_DESIGN.md) Parts II–VIII is implemented (local-only;
+Everything in [DATA_PLANE_DESIGN.md](data-plane/DATA_PLANE_DESIGN.md) Parts II–VIII is implemented (local-only;
 §C remote layers are additive on top). Verified end-to-end with a headless smoke test:
 `ReadData` snapshot, `Subscribe`/`Publish` push (seq + inter-frame delta), `cat /proc/<m>/<facet>`,
 cell coalesce with sequence gaps, stream overload breaker trip, and `kill` → `ProducerKilled`.
@@ -123,7 +123,7 @@ Design work remains; these are additive layers on top of §A, not blockers for t
       generic VFS proxy over the kernel `FileSystem` — it serves the **entire root**
       (`/proc`, `/etc`, `/dev`, `/packs`, ...), and live `/proc` facets stay fresh
       because `ProcFileSystem` rebuilds them on every server-side read. See
-      [AFCP.md](AFCP.md). The bridge is kernel-space for now; migrating it to an
+      [AFCP.md](afcp/AFCP.md). The bridge is kernel-space for now; migrating it to an
       `HCore.Packages.Afcp` package needs `IVirtualFileSystem` moved to Base + a
       proc-view/mount contract (documented in AFCP.md "Migration path"). The
       follow-up gaps are tracked under C7.

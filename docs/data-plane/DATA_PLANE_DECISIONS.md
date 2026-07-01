@@ -2,7 +2,7 @@
 
 > **Generated:** 1/07/2026
 > **Source of truth for the design:** [DATA_PLANE_DESIGN.md](DATA_PLANE_DESIGN.md)
-> **Implementation plan:** [TODO.md](TODO.md) §A
+> **Implementation plan:** [TODO.md](../TODO.md) §A
 
 These are the §B micro-decisions that blocked the first slice of the local data
 plane (§A). Each was settled before coding; the "Decision" line is what ships.

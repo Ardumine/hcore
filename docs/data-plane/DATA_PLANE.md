@@ -316,7 +316,7 @@ Different ALCs see different `Type` objects, so a package-local `ScanFrame` woul
 `Subscribe<ScanFrame>` fail to match `ExposeData<ScanFrame>` across packages.
 
 If producer and consumer are in the **same** package (same ALC), the frame type can be package-local
-— that's what the demo below does. See [ARCHITECTURE.md → Assembly Isolation](ARCHITECTURE.md#assembly-isolation).
+— that's what the demo below does. See [ARCHITECTURE.md → Assembly Isolation](../architecture/ARCHITECTURE.md#assembly-isolation).
 
 ---
 
@@ -431,13 +431,13 @@ Each instance receives a `ScopedDataHost` bound to its own name (mirroring `Scop
 `ExposeData` always registers the facet under *this* instance, and a module cannot forge another
 producer's path. `ReadData`/`Subscribe` are path-based and pass straight through to the kernel.
 
-For the full type reference, see [API_REFERENCE.md](API_REFERENCE.md#data-plane).
+For the full type reference, see [API_REFERENCE.md](../architecture/API_REFERENCE.md#data-plane).
 
 ---
 
 ## What's not here yet (additive layers)
 
-These are intentionally deferred — each is a clean layer on top, not a rewrite (see [TODO.md](TODO.md)):
+These are intentionally deferred — each is a clean layer on top, not a rewrite (see [TODO.md](../TODO.md)):
 
 - **Pull face** — an `await foreach` (`IAsyncEnumerable<T>`) adapter over the same per-subscriber
   queue. Push ships first; pull is a thin add-on.

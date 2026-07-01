@@ -269,14 +269,14 @@ var same = Host.GetModuleInterface<IRunnable>("/proc/worker-a");
 | `Spawn<T>(module, instance)` | a new named instance (not run) | you want to create one or more independent copies |
 | `GetModuleInterface<T>(instancePath)` | an existing instance | you want to reach an instance that is already running |
 
-> **Where the interface lives matters.** For the cast inside these calls to succeed, the interface type (`IModule1` above) must be the *same* `Type` on both sides. Put shared interfaces in `HCore.Modules.Base` (or another assembly loaded once in the default context); see [ARCHITECTURE.md → Assembly Isolation](ARCHITECTURE.md#assembly-isolation) and [DESIGN.md](DESIGN.md).
+> **Where the interface lives matters.** For the cast inside these calls to succeed, the interface type (`IModule1` above) must be the *same* `Type` on both sides. Put shared interfaces in `HCore.Modules.Base` (or another assembly loaded once in the default context); see [ARCHITECTURE.md → Assembly Isolation](../architecture/ARCHITECTURE.md#assembly-isolation) and [DESIGN.md](../architecture/DESIGN.md).
 
 ## Streaming Data Between Modules (Data Plane)
 
 `Host` is for *calling* a module synchronously. For **streaming live data** — a sensor publishing
 frames that one or more consumers receive — use the data plane, reached through the third injected
 handle, `Data` (`IDataHost`). A producer exposes a facet at `/proc/<instance>/<facet>`; a consumer
-reads a snapshot or subscribes to a push stream. Full guide: [DATA_PLANE.md](DATA_PLANE.md).
+reads a snapshot or subscribes to a push stream. Full guide: [DATA_PLANE.md](../data-plane/DATA_PLANE.md).
 
 ```csharp
 // Producer — expose a facet and push frames to the returned handle.
@@ -300,7 +300,7 @@ can `cat /proc/lidar/scan_data` to inspect the current value (via the formatter 
 > **Cross-package type rule.** For a producer and consumer in *different* packages to share a facet,
 > the frame type `T` must live in `HCore.Modules.Base` (different AssemblyLoadContext ⇒ different
 > `Type`). Same-package producer+consumer may use a package-local type. See
-> [DATA_PLANE.md → Cross-package type rule](DATA_PLANE.md#cross-package-type-rule).
+> [DATA_PLANE.md → Cross-package type rule](../data-plane/DATA_PLANE.md#cross-package-type-rule).
 
 The worked demo is `HCore.Packages.Sensor` (`LidarImplement` + `SlamImplement`).
 
@@ -316,7 +316,7 @@ The shell (in its own package, `HCore.Packages.HShell`) spawns a module by its d
 / $ kill /proc/m2                                  # kill it (and any children it owns)
 ```
 
-See the [Shell Guide](SHELL.md) for the full command list.
+See the [Shell Guide](../shell/SHELL.md) for the full command list.
 
 ## Owning Child Modules (Sub-Modules)
 

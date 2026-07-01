@@ -3,8 +3,8 @@
 > **Status:** Layer 1 (mount + Sync + Read) **implemented & verified**, plus remote
 > VFS writes (Write/MkDir/Remove, §C7a) **and Layer 2 (subscribe-push over the wire,
 > §C7b) implemented & verified**. Layer 3 (MKCall proxy) deferred.
-> **Related:** [DATA_PLANE_DESIGN.md](DATA_PLANE_DESIGN.md) Part IX (the 9P-style
-> mount model), [TODO.md](TODO.md) §C1, §C7a, §C7b.
+> **Related:** [DATA_PLANE_DESIGN.md](../data-plane/DATA_PLANE_DESIGN.md) Part IX (the 9P-style
+> mount model), [TODO.md](../TODO.md) §C1, §C7a, §C7b.
 
 ---
 
@@ -13,7 +13,7 @@
 AFCP (the **A**... **F**... **C**... **P**... protocol — name inherited from V2)
 is the wire protocol that lets two HCore instances expose and consume each other's
 `/proc` data-plane facets over TCP. It is the remote layer of the data plane
-described in [DATA_PLANE_DESIGN.md](DATA_PLANE_DESIGN.md) Part IX: remoteness is
+described in [DATA_PLANE_DESIGN.md](../data-plane/DATA_PLANE_DESIGN.md) Part IX: remoteness is
 **a path prefix**, never a first-class kernel identity (9P/Plan-9 style, not V2's
 `Guid`-keyed peer registry).
 

@@ -2,7 +2,7 @@
 
 **Status:** ✅ IMPLEMENTED 2026-07-01 — **approach D (flat registry + `ParentName` edge, via `ContainerImplement` + `SpawnChild`)**. Full spec in *Chosen design (D)* below; see *Implementation notes* at the end of this document for what actually shipped, including two concurrency fixes found and made during the build.
 **Scope:** shipped. `/proc` now nests parent→child, `ContainerImplement.SpawnChild`/`SpawnChildByName`/`KillChild` are the author surface, `IModuleHost.Kill` is the shell's privileged cascade kill, and `HCore.Packages.Usb` is the worked demo.
-**Related:** [ARCHITECTURE.md](ARCHITECTURE.md), [DESIGN.md](DESIGN.md).
+**Related:** [ARCHITECTURE.md](../architecture/ARCHITECTURE.md), [DESIGN.md](../architecture/DESIGN.md).
 
 ---
 

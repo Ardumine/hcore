@@ -403,15 +403,15 @@ The mechanism above is the **typed** path: the caller imports the target's inter
 
 - **Dynamic invocation** — `Host.Call(name, member, args)` for callers that do *not* hold the interface, paired with an `[Exposed]` attribute so a module publishes only a chosen subset of its members (a small capability boundary). This is the D-Bus / gRPC-reflection model: a typed proxy as optional sugar over a dynamic substrate.
 - **Full process lifecycle** — `kill` (cascade reap) is built — see *Module Hierarchy* below. `exit`/self-reap is not: a module still cannot signal its own completion and be cleaned up automatically when `Run()` returns; something else must call `Kill` on it.
-- **Service bootstrap** — **built.** `/etc/services/*.svc` are shell scripts run by init at boot (and managed at runtime via the `service` command). Each service's primary instance is named after its file; `service start/stop/restart/status/list` drives the lifecycle through `IServiceManager` (implemented by init). See [SHELL.md](SHELL.md).
+- **Service bootstrap** — **built.** `/etc/services/*.svc` are shell scripts run by init at boot (and managed at runtime via the `service` command). Each service's primary instance is named after its file; `service start/stop/restart/status/list` drives the lifecycle through `IServiceManager` (implemented by init). See [SHELL.md](../shell/SHELL.md).
 - **Shell as its own module** — **built.** The shell lives in its own package `HCore.Packages.HShell` (`IShell`); init (PID 1, `/proc/init`) spawns two shell children: `/proc/init/svc` (a worker used only for `RunScript`) and `/proc/init/console` (the interactive REPL).
-- **`ctl` / `data` file invocation** — the `data` read half is **built**: `cat /proc/<m>/<facet>` inspects a producer's current value via the formatter hook (see [Data Plane Guide](DATA_PLANE.md)). The `ctl` write half (driving a module by writing to `/proc/<name>/ctl`, the Plan 9 model) is still future work — it pairs with dynamic invocation below.
-- **Out-of-process / remote modules** — the mount/read/write half is **built** (AFCP Layers 1 + writes, see [AFCP.md](AFCP.md)); the typed method-call proxy (`GetModuleInterface<T>(remotePath)` over the wire, AFCP Layer 3 / MKCall) is still future work. The data plane's `(Sequence, InterFrameDelta)` is forward-compatible and works unchanged now that AFCP has arrived.
+- **`ctl` / `data` file invocation** — the `data` read half is **built**: `cat /proc/<m>/<facet>` inspects a producer's current value via the formatter hook (see [Data Plane Guide](../data-plane/DATA_PLANE.md)). The `ctl` write half (driving a module by writing to `/proc/<name>/ctl`, the Plan 9 model) is still future work — it pairs with dynamic invocation below.
+- **Out-of-process / remote modules** — the mount/read/write half is **built** (AFCP Layers 1 + writes, see [AFCP.md](../afcp/AFCP.md)); the typed method-call proxy (`GetModuleInterface<T>(remotePath)` over the wire, AFCP Layer 3 / MKCall) is still future work. The data plane's `(Sequence, InterFrameDelta)` is forward-compatible and works unchanged now that AFCP has arrived.
 - **Capability model for `Kill`** — today `IModuleHost.Kill` is privileged and unrestricted (any holder of a `Host` can kill any instance by path); only `KillChild` is owner-scoped. A real fix needs a permission layer that doesn't exist yet.
 
 ## Module Hierarchy — Sub-Modules
 
-A module can own **child** module instances: real, stateful modules created by their parent, addressable at `/proc/<parent>/<child>`, whose lifetime is **structurally coupled** to the parent — killing the parent reaps every descendant, with no author teardown code. This is **Design D**, chosen after a full debate recorded in [MODULE_HIERARCHY.md](MODULE_HIERARCHY.md); `HCore.Packages.Usb` is the worked demo (a controller owning two device children).
+A module can own **child** module instances: real, stateful modules created by their parent, addressable at `/proc/<parent>/<child>`, whose lifetime is **structurally coupled** to the parent — killing the parent reaps every descendant, with no author teardown code. This is **Design D**, chosen after a full debate recorded in [MODULE_HIERARCHY.md](../modules/MODULE_HIERARCHY.md); `HCore.Packages.Usb` is the worked demo (a controller owning two device children).
 
 ### Author-facing surface
 
@@ -440,7 +440,7 @@ No `new`, no `Vfs`/`Host` wiring, no path strings, no cast. `SpawnChildByName<T>
 - **`/proc` nests for free.** `ProcFileSystem` sorts instances by name, splits each composite key on `/`, and walks/creates the matching directory tree, reusing the existing `ReadOnlyVirtualDirectory` — no new VFS machinery needed.
 - **Lifecycle hooks stay kernel-callable, author-overridable, sibling-safe.** `BaseImplement.OnKilled()`/`DescribeForProc()` are `protected internal`. `HCore.Modules.Base/AssemblyInfo.cs` grants `HCore.Main` friend access via `[assembly: InternalsVisibleTo("HCore.Main")]` so the kernel can call them directly on a `BaseImplement` reference; a sibling package holding a *different* module's concrete instance still can't call them (C# protected access is scoped to your own class hierarchy, not just any friend assembly).
 
-See [MODULE_HIERARCHY.md](MODULE_HIERARCHY.md) for the full design debate, acceptance criteria, and prior-art comparison against the 2nd iteration (`Ardumine/kernel`).
+See [MODULE_HIERARCHY.md](../modules/MODULE_HIERARCHY.md) for the full design debate, acceptance criteria, and prior-art comparison against the 2nd iteration (`Ardumine/kernel`).
 
 ## Runtime Filesystem Layout
 
