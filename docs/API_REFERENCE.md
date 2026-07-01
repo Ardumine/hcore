@@ -74,19 +74,66 @@ public abstract class BaseImplement : IModule
 
     public IModuleHost Host { get; private set; }
     public void AttachHost(IModuleHost host);
+
+    public string InstanceName { get; private set; }
+    public void AttachInstanceName(string name);
+
+    protected internal virtual void OnKilled();
+    protected internal virtual string? DescribeForProc();
 }
 ```
 
-Abstract base class that all module implementations must extend. Provides the two kernel "system-call" surfaces: `Vfs` (files) and `Host` (other modules).
+Abstract base class that all module implementations must extend. Provides the two kernel "system-call" surfaces (`Vfs`, `Host`), this instance's own `/proc` identity (`InstanceName`), and two lifecycle hooks the kernel calls directly.
 
 | Member | Description |
 |--------|-------------|
 | `Vfs` | The virtual filesystem proxy injected by the kernel. Initially a null-object that throws on any operation. |
 | `AttachVfs(vfs)` | Called by the kernel to inject the module's filesystem proxy. Throws `ArgumentNullException` if `vfs` is null. |
-| `Host` | The module host injected by the kernel — the module's gateway to other modules. Initially a null-object that throws on any operation. |
+| `Host` | The module host injected by the kernel — the module's gateway to other modules. Initially a null-object that throws on any operation. Every created instance actually receives a `ScopedModuleHost` bound to its own instance name, not the raw kernel object. |
 | `AttachHost(host)` | Called by the kernel to inject the module host. Throws `ArgumentNullException` if `host` is null. |
+| `InstanceName` | This instance's own `/proc` identity (e.g. `"usb/device0"`). Kernel-injected, like `Vfs`/`Host`. |
+| `AttachInstanceName(name)` | Called by the kernel at creation, exactly like `AttachVfs`/`AttachHost`. |
+| `OnKilled()` | Called by the kernel when this instance is reaped — killed directly, or as part of a parent's cascade. Override to release resources; default is a no-op. Runs *after* the kernel releases its process-table lock, leaf-first across a cascade. `protected internal` — see [Module Hierarchy](MODULE_HIERARCHY.md) for why only the kernel or a subclass can call it. |
+| `DescribeForProc()` | Module-authored extra lines shown in this instance's `/proc/<name>/info` (e.g. a device's serial/location). Default `null` (no extra lines). Same access as `OnKilled()`. |
 
-**Usage:** Module authors extend this class and use `Vfs` and `Host`. The kernel calls `AttachVfs()` and `AttachHost()` before invoking any module methods.
+**Usage:** Module authors extend this class and use `Vfs` and `Host`. The kernel calls `AttachVfs()`, `AttachHost()`, and `AttachInstanceName()` before invoking any module methods. Override `OnKilled()`/`DescribeForProc()` only if your module needs cleanup or wants extra `/proc` info — most authors extend `ContainerImplement` instead of `BaseImplement` when they need children.
+
+---
+
+### ContainerImplement
+
+```csharp
+namespace HCore.Modules.Base;
+
+public abstract class ContainerImplement : BaseImplement
+{
+    protected TImpl SpawnChild<TImpl>(string name, Action<TImpl>? init = null) where TImpl : IModule;
+    protected T SpawnChildByName<T>(string moduleName, string name, Action<T>? init = null) where T : IModule;
+    protected void KillChild(string name);
+}
+```
+
+Base class for a module that owns child module instances (Design D — see [Module Hierarchy](MODULE_HIERARCHY.md)). Extend this instead of `BaseImplement` when your module needs to spawn stateful children that appear nested under it in `/proc`, with lifetime structurally coupled to it.
+
+| Member | Description |
+|--------|-------------|
+| `SpawnChild<TImpl>(name, init)` | Create a child of THIS instance, resolved by concrete implementation type — no `new`, no `Vfs`/`Host` wiring, no name strings, no teardown code. `init` runs before the child is visible in `/proc`. |
+| `SpawnChildByName<T>(moduleName, name, init)` | Cross-package form: create a child by module name, returning its interface (which must live in a shared contract assembly). |
+| `KillChild(name)` | Kill one of THIS instance's own children (and its descendants). Not required for cleanup — killing the parent already cascades. |
+
+**Example:**
+
+```csharp
+public sealed class UsbModuleImplement : ContainerImplement, IUsb, IRunnable
+{
+    public void Run()
+    {
+        SpawnChild<UsbDeviceImplement>("device0", d => d.Init("SN-A", "1-1.2"));
+        SpawnChild<UsbDeviceImplement>("device1", d => d.Init("SN-B", "1-1.3"));
+    }
+    // No teardown — killing this module reaps device0/device1 automatically.
+}
+```
 
 ---
 
@@ -99,17 +146,26 @@ public interface IModuleHost
 {
     T GetModuleInterface<T>(string instancePath) where T : IModule;
     T Spawn<T>(string moduleName, string instanceName) where T : IModule;
+
+    TImpl SpawnChild<TImpl>(string leafName, Action<TImpl>? init) where TImpl : IModule;
+    T SpawnChildByName<T>(string moduleName, string leafName, Action<T>? init) where T : IModule;
+    void KillChild(string leafName);
+    void Kill(string instancePath);
 }
 ```
 
-The process / IPC "system-call" surface. Implemented by the kernel (`ModuleHost`) and injected into each module as `BaseImplement.Host`. Lets a module reach other modules **without referencing their assemblies** — only the shared interface type is needed, and its identity is preserved across load contexts.
+The process / IPC "system-call" surface. Implemented by the kernel (`ModuleHost`) and injected into each module as `BaseImplement.Host` — in practice every instance receives a `ScopedModuleHost` facade bound to its own instance name, so `SpawnChild`/`SpawnChildByName`/`KillChild` always act on the calling module's OWN children. Lets a module reach other modules **without referencing their assemblies** — only the shared interface type is needed, and its identity is preserved across load contexts.
 
 | Method | Description |
 |--------|-------------|
-| `Spawn<T>(moduleName, instanceName)` | **Creates** a new named instance of a module (like `exec`), registered at `/proc/<instanceName>` but **not** run. This is the only operation that resolves the concrete implementation type (via the descriptor registry). The same module may be spawned many times. Throws if the module name is unknown or the instance name is already in use. |
+| `Spawn<T>(moduleName, instanceName)` | **Creates** a new top-level named instance of a module (like `exec`), registered at `/proc/<instanceName>` but **not** run. This is the only operation that resolves the concrete implementation type by NAME (via the descriptor registry). The same module may be spawned many times. Throws if the module name is unknown, the instance name is already in use, or contains `/`. |
 | `GetModuleInterface<T>(instancePath)` | **Looks up** an already-running instance by its `/proc` path (e.g. `"/proc/module1"`; a bare name like `"module1"` is also accepted) and returns it as `T`. It **never creates** anything — a caller holding only an interface plus a path cannot construct anything, and lookup needs only the interface because the object already exists. Throws if nothing is running at that path or the instance does not implement `T`. |
+| `SpawnChild<TImpl>(leafName, init)` | Creates a CHILD of the calling module, resolved by concrete implementation type. Runs `init` before the child is published — never observable half-built. Appears at `/proc/<owner>/<leafName>`; destroying the owner structurally reaps it. Most authors call `ContainerImplement.SpawnChild` instead of this directly. See [Module Hierarchy](MODULE_HIERARCHY.md). |
+| `SpawnChildByName<T>(moduleName, leafName, init)` | Cross-package escape hatch for `SpawnChild`: creates a child by module NAME instead of concrete type, returning the child's interface (which must therefore live in a shared contract assembly). |
+| `KillChild(leafName)` | Kills a child OF THE CALLING module. Owner-scoped — throws if `leafName` is not actually this module's child. Cascades to the child's own descendants, leaf-first. |
+| `Kill(instancePath)` | Privileged cascade kill of ANY instance by `/proc` path, regardless of ownership. Reaps the target and every transitive descendant, leaf-first. No capability model exists yet, so this is intentionally unrestricted — the shell's `kill` command uses it. |
 
-Both throw `InvalidOperationException` if the target is unknown or does not implement `T`.
+All throw `InvalidOperationException` if the target is unknown, already exists, or does not implement the requested type.
 
 ---
 
@@ -322,7 +378,7 @@ The kernel ships four `IVirtualFileSystem` implementations, mounted in `Program.
 | `HostFileSystem` | `/` | no | Maps to a real host directory (`FS/`). |
 | `MemoryFileSystem` | `/tmp` | no | In-memory; contents are lost when the process exits. |
 | `DeviceFileSystem` | `/dev` | yes | Synthetic device files. |
-| `ProcFileSystem` | `/proc` | yes | Live view of running module instances (rebuilt on every access from the `ModuleHost`). |
+| `ProcFileSystem` | `/proc` | yes | Live view of running module instances, nested by parent→child (rebuilt on every access from the `ModuleHost`). |
 
 ---
 

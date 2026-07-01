@@ -280,9 +280,84 @@ The HInit shell spawns a module by its descriptor `Name`, then runs an already-s
 / $ spawn HCore.Packages.TestDemo.Module2 m2       # create Module2 (not run)
 / $ run /proc/m2                                   # run the m2 instance
 / $ ls /proc                                       # see what's running
+/ $ kill /proc/m2                                  # kill it (and any children it owns)
 ```
 
 See the [Shell Guide](SHELL.md) for the full command list.
+
+## Owning Child Modules (Sub-Modules)
+
+If your module needs to own **real, stateful children** — e.g. a USB controller owning its plugged-in device ports — extend `ContainerImplement` instead of `BaseImplement`. This is **Design D**; the full debate and spec live in [MODULE_HIERARCHY.md](MODULE_HIERARCHY.md).
+
+```csharp
+using HCore.Modules.Base;
+
+namespace HCore.Packages.Usb.UsbDevice;
+
+public sealed class UsbDeviceImplement : BaseImplement, IUsbDevice
+{
+    public string Serial { get; private set; } = "";
+    public string Location { get; private set; } = "";
+
+    internal void Init(string serial, string location)
+    {
+        Serial = serial;
+        Location = location;
+    }
+
+    public byte[] Read(int len) => new byte[len];
+
+    // Optional: extra lines shown in this instance's /proc/<name>/info.
+    protected override string? DescribeForProc()
+        => $"serial:     {Serial}\nlocation:   {Location}";
+}
+```
+
+```csharp
+using HCore.Modules.Base;
+using HCore.Packages.Usb.UsbDevice;
+
+namespace HCore.Packages.Usb.Usb;
+
+public sealed class UsbModuleImplement : ContainerImplement, IUsb, IRunnable
+{
+    public void Run()
+    {
+        SpawnChild<UsbDeviceImplement>("device0", d => d.Init("SN-A", "1-1.2"));
+        SpawnChild<UsbDeviceImplement>("device1", d => d.Init("SN-B", "1-1.3"));
+    }
+    // No teardown — killing this module reaps device0/device1 automatically.
+}
+```
+
+This is the actual `HCore.Packages.Usb` demo pack (mirrors `TestDemo`'s project shape exactly). Running it produces:
+
+```
+/ $ spawn HCore.Packages.Usb.Usb usb
+/ $ run /proc/usb
+/ $ ls /proc/usb
+info  device0/  device1/
+/ $ cat /proc/usb/device0/info
+instance:   usb/device0
+module:     HCore.Packages.Usb.UsbDevice
+...
+serial:     SN-A
+location:   1-1.2
+/ $ kill /proc/usb          # reaps usb, device0, and device1 together
+```
+
+### What `ContainerImplement` gives you
+
+| Member | Description |
+|--------|-------------|
+| `SpawnChild<TImpl>(name, init)` | Create a child of THIS instance, resolved by concrete implementation type. No `new`, no `Vfs`/`Host` wiring, no name strings. `init` runs before the child is visible in `/proc`, so it's never observed half-built. |
+| `SpawnChildByName<T>(moduleName, name, init)` | Cross-package form: create a child by module name, returning its interface — the interface must live in `HCore.Modules.Base` (or another shared contract assembly) for the caller to use it as more than the empty `IModule` marker. |
+| `KillChild(name)` | Kill one of THIS instance's own children. Optional — killing the parent module itself already cascades to every descendant. |
+
+**Rules worth knowing:**
+- A child's interface (`IUsbDevice` above) must live in `HCore.Modules.Base`, not in your package — otherwise a caller in a different package can only see it as the empty `IModule` marker (different `AssemblyLoadContext` ⇒ different `Type`).
+- Ownership is enforced structurally: your module can only `KillChild` its own children. It cannot reach into another module's subtree that way. The shell's `kill` command, by contrast, is privileged and can kill anything by path — see [MODULE_HIERARCHY.md](MODULE_HIERARCHY.md) for why that's a documented, not-yet-closed gap.
+- Leaf names (and top-level instance names passed to `Spawn`) can't contain `/` — nesting only happens through `SpawnChild`.
 
 ## Multiple Modules Per Package
 

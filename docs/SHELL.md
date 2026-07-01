@@ -31,6 +31,7 @@ dotnet run --project HCore.Main
 | `append <file> <text>` | Append text to a file |
 | `spawn <module> <instance>` | **Spawn** a new named instance (does **not** run it) |
 | `run <instance>` | Run an already-spawned instance by its `/proc` path (must be `IRunnable`) |
+| `kill <instance>` | **Kill** an instance and cascade to every child it owns (privileged — works on any instance, not just your own) |
 | `clear` | Clear the terminal |
 
 Arguments containing spaces can be quoted: `write notes.txt "hello world"`.
@@ -75,3 +76,39 @@ implements: HCore.Packages.TestDemo.Module2.Module2Implement
 ```
 
 `spawn` takes a module's **descriptor `Name`** (e.g. `HCore.Modules.TestDemo.Module1`, `HCore.Packages.TestDemo.Module2`) plus an instance name; it creates the instance but does **not** run it, so it works for any module including services with no entry point (like `Module1`). `run` takes the `/proc` path (or bare name) of an **already-spawned** instance and runs it — it never creates anything. `m2` calls `Module1`, which must already be spawned at `/proc/module1`. See [DESIGN.md](DESIGN.md) for the spawn-vs-lookup distinction and [MODULE_AUTHORING.md](MODULE_AUTHORING.md) to build your own.
+
+## Example session — module hierarchy (kill & cascade)
+
+A module can own real child instances nested under it in `/proc`; killing the parent reaps every descendant automatically:
+
+```
+/ $ spawn HCore.Packages.Usb.Usb usb
+spawned 'usb' from 'HCore.Packages.Usb.Usb' (at /proc/usb)
+
+/ $ run /proc/usb
+
+/ $ ls /proc/usb
+info
+device0/
+device1/
+
+/ $ cat /proc/usb/device0/info
+instance:   usb/device0
+module:     HCore.Packages.Usb.UsbDevice
+friendly:   Demo USB device
+interface:  HCore.Modules.Base.IUsbDevice
+implements: HCore.Packages.Usb.UsbDevice.UsbDeviceImplement
+serial:     SN-A
+location:   1-1.2
+
+/ $ kill /proc/usb
+killed '/proc/usb'
+
+/ $ ls /proc
+init/
+
+/ $ ls /proc/usb
+error: ...not found...
+```
+
+`device0`/`device1` were created by `usb` itself via `SpawnChild` (see [MODULE_AUTHORING.md → Owning Child Modules](MODULE_AUTHORING.md#owning-child-modules-sub-modules)) — you never spawn them directly. `kill` is privileged: it works on any instance by path, not just ones you own. See [MODULE_HIERARCHY.md](MODULE_HIERARCHY.md) for the full design.

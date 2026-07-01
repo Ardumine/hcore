@@ -97,23 +97,23 @@ That gives the decoupling of message-passing systems (Erlang, Smalltalk, Objecti
 
 ## "How does a module own child sub-modules (e.g. a USB controller owning its device ports)?"
 
-Decided: **approach D — the parent is a host for its own subtree.** A parent extends `ContainerImplement` and calls one verb, `SpawnChild<IUsbDevice>("device0", init)`; the kernel constructs the child, wires its `Vfs`/`Host`, runs `init` *before* publishing, places it at `/proc/usb/device0`, and records a **parent→child edge**. Destroying the parent **structurally reaps** the whole subtree — no author teardown code.
+Built: **approach D — the parent is a host for its own subtree.** A parent extends `ContainerImplement` and calls one verb, `SpawnChild<UsbDeviceImplement>("device0", d => d.Init(...))`; the kernel constructs the child, wires its `Vfs`/`Host`/`InstanceName`, runs `init` *before* publishing, places it at `/proc/usb/device0`, and records a **parent→child edge** (`RunningInstance.ParentName`). Destroying the parent **structurally reaps** the whole subtree — no author teardown code.
 
 Why D over the alternatives (host-managed flat keys / owned-and-served pull / returned handles): only D makes lifetime-coupling a *kernel guarantee* while keeping children real, stateful, and `/proc`-addressable — and it yields the *simplest* author code (one verb; the complexity lives in the kernel, paid once). The 2nd iteration (`Ardumine/kernel`) built the flat-keys-with-an-edge variant, and its own logs document the failures D removes (orphaned children, spawn-then-init, unenforced ownership).
 
-Note: `expose` (which members a module publishes) and `sub-modules` (child instances it owns) are kept strictly separate. Full spec, build plan, acceptance criteria, and the four-way debate: see **[MODULE_HIERARCHY.md](MODULE_HIERARCHY.md)**.
+Note: `expose` (which members a module publishes) and `sub-modules` (child instances it owns) are kept strictly separate. Full spec, build plan, acceptance criteria, the four-way debate, and implementation notes: see **[MODULE_HIERARCHY.md](MODULE_HIERARCHY.md)**; kernel mechanics in **[ARCHITECTURE.md → Module Hierarchy](ARCHITECTURE.md#module-hierarchy--sub-modules)**.
 
 ## Future work (designed, not yet built)
 
 Each is an additive layer, not a rewrite:
 
 1. **Dynamic invocation** — `Host.Call(name, member, args)` + an `[Exposed]` attribute. Call without the interface; expose only chosen members.
-2. **Process lifecycle** — `kill` / exit / reap. Today instances are never removed from `/proc`; a module cannot signal completion and be cleaned up.
+2. **Full process lifecycle** — `kill` (cascade reap) is built (see *Module hierarchy* above); `exit`/self-reap is not — a module still cannot signal its own completion and be cleaned up automatically when `Run()` returns.
 3. **Service bootstrap** — an `/etc/services` directory holding startup scripts that the shell executes at boot to spawn the service modules other modules depend on, so consumers can rely on well-known instances (e.g. `/proc/module1`) already existing. Today services must be spawned manually before a consumer can look them up.
 4. **Shell as its own module** — make the shell a separate module from the init process. Right now HInit *is* the init process (PID 1, `/proc/init`); the long-term idea is a minimal init that launches the shell as a distinct module.
 5. **`ctl` / `data` file invocation** — drive a module by writing to `/proc/<name>/ctl` (the Plan 9 model), making modules scriptable straight from the shell.
 6. **Out-of-process / remote modules** — would add a serialization layer; the typed proxy could then sit over a message transport unchanged.
-7. **Module hierarchy / sub-modules** — a parent owning child modules visible at `/proc/<parent>/<child>` with kernel-enforced cascade. **Decided: approach D** (`ContainerImplement` + `SpawnChild`); full spec in [MODULE_HIERARCHY.md](MODULE_HIERARCHY.md).
+7. **Capability model for `Kill`** — today `IModuleHost.Kill` is privileged and unrestricted (any holder of a `Host` can kill any instance by path); only `KillChild` is owner-scoped. A real fix needs a permission layer that doesn't exist yet.
 
 ## Prior-art touchstones
 

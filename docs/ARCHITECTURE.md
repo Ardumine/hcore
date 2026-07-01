@@ -23,6 +23,7 @@ graph TB
     subgraph Packages["Packages (Runtime Loaded)"]
         HInit[HCore.Packages.HInit<br/>Init Shell]
         TestDemo[HCore.Packages.TestDemo<br/>Demo Modules]
+        Usb[HCore.Packages.Usb<br/>Module Hierarchy Demo]
     end
 
     subgraph Shared["Shared Contracts"]
@@ -394,11 +395,45 @@ sequenceDiagram
 The mechanism above is the **typed** path: the caller imports the target's interface and gets compile-time-checked calls. The following are intentionally deferred — each is a clean layer on top of what exists, not a rewrite:
 
 - **Dynamic invocation** — `Host.Call(name, member, args)` for callers that do *not* hold the interface, paired with an `[Exposed]` attribute so a module publishes only a chosen subset of its members (a small capability boundary). This is the D-Bus / gRPC-reflection model: a typed proxy as optional sugar over a dynamic substrate.
-- **Process lifecycle** — `kill` / exit / reap. Today instances are never removed from `/proc`; a module cannot signal completion and be cleaned up.
+- **Full process lifecycle** — `kill` (cascade reap) is built — see *Module Hierarchy* below. `exit`/self-reap is not: a module still cannot signal its own completion and be cleaned up automatically when `Run()` returns; something else must call `Kill` on it.
 - **Service bootstrap** — an `/etc/services` directory of startup scripts the shell runs at boot to spawn the service modules others depend on, so consumers can rely on well-known instances (e.g. `/proc/module1`) already existing. Today services must be spawned manually first.
 - **Shell as its own module** — split the shell from the init process. Today HInit *is* init (PID 1, `/proc/init`); the long-term idea is a minimal init that launches the shell as a separate module.
 - **`ctl` / `data` file invocation** — driving a module by writing to `/proc/<name>/ctl` (the Plan 9 model), making modules scriptable straight from the shell.
 - **Out-of-process / remote modules** — would add a serialization layer; the typed proxy could then sit over a message transport unchanged.
+- **Capability model for `Kill`** — today `IModuleHost.Kill` is privileged and unrestricted (any holder of a `Host` can kill any instance by path); only `KillChild` is owner-scoped. A real fix needs a permission layer that doesn't exist yet.
+
+## Module Hierarchy — Sub-Modules
+
+A module can own **child** module instances: real, stateful modules created by their parent, addressable at `/proc/<parent>/<child>`, whose lifetime is **structurally coupled** to the parent — killing the parent reaps every descendant, with no author teardown code. This is **Design D**, chosen after a full debate recorded in [MODULE_HIERARCHY.md](MODULE_HIERARCHY.md); `HCore.Packages.Usb` is the worked demo (a controller owning two device children).
+
+### Author-facing surface
+
+Extend `ContainerImplement` instead of `BaseImplement` and call one verb:
+
+```csharp
+public sealed class UsbModuleImplement : ContainerImplement, IUsb, IRunnable
+{
+    public void Run()
+    {
+        SpawnChild<UsbDeviceImplement>("device0", d => d.Init("SN-A", "1-1.2"));
+        SpawnChild<UsbDeviceImplement>("device1", d => d.Init("SN-B", "1-1.3"));
+    }
+    // No teardown — killing this module reaps device0/device1 automatically.
+}
+```
+
+No `new`, no `Vfs`/`Host` wiring, no path strings, no cast. `SpawnChildByName<T>` is the cross-package escape hatch when the caller can't reference the child's concrete type — it returns the child's interface instead, which must then live in `HCore.Modules.Base` (e.g. `IUsbDevice`) for the cast to succeed across assemblies.
+
+### Kernel mechanics
+
+- **Ownership via `ScopedModuleHost`.** Every created instance — top-level or child — is injected with a `ScopedModuleHost` (`HCore.Main/Internal/ScopedModuleHost.cs`): a facade bound to that instance's own name, instead of the raw kernel `ModuleHost`. A module physically cannot forge or squat another parent's subtree; it can only spawn/kill children of ITSELF. The raw `ModuleHost`'s own `SpawnChild`/`SpawnChildByName`/`KillChild` throw — there is no owner context for the kernel object itself.
+- **One flat registry + a `ParentName` edge.** `ModuleHost` still keys everything in a single `Dictionary<string, RunningInstance>` — the composite key (e.g. `"usb/device0"`) encodes the tree — and `RunningInstance.ParentName` is the one authoritative edge that cascade and ownership checks walk. No second sub-host table to drift out of sync.
+- **Init runs before publish, outside the lock.** A child is constructed and wired with the process-table lock released, its `init` callback runs unlocked (so a nested `SpawnChild` call from within `init` doesn't deadlock — the outer call already released the lock before invoking `init`), and only then is it published, re-checking under the lock that the owner is **still running** and the name is **still free**. Both re-checks matter: without the owner-liveness one, a concurrent kill of the owner during `init` could publish an orphaned child that the cascade never saw.
+- **Cascade kill, leaf-first, hooks run unlocked.** `Kill(path)` (privileged — the shell's `kill` command) and the owner-scoped `KillChild(leaf)` both collect the target's entire subtree via the `ParentName` edge and remove it from the registry under the lock, then call each removed instance's `OnKilled()` **after releasing the lock**, leaf-first. `OnKilled()` is arbitrary module code and must never run while the process table is locked — the same rule `DescribeForProc()` follows when rendering `/proc` info.
+- **`/proc` nests for free.** `ProcFileSystem` sorts instances by name, splits each composite key on `/`, and walks/creates the matching directory tree, reusing the existing `ReadOnlyVirtualDirectory` — no new VFS machinery needed.
+- **Lifecycle hooks stay kernel-callable, author-overridable, sibling-safe.** `BaseImplement.OnKilled()`/`DescribeForProc()` are `protected internal`. `HCore.Modules.Base/AssemblyInfo.cs` grants `HCore.Main` friend access via `[assembly: InternalsVisibleTo("HCore.Main")]` so the kernel can call them directly on a `BaseImplement` reference; a sibling package holding a *different* module's concrete instance still can't call them (C# protected access is scoped to your own class hierarchy, not just any friend assembly).
+
+See [MODULE_HIERARCHY.md](MODULE_HIERARCHY.md) for the full design debate, acceptance criteria, and prior-art comparison against the 2nd iteration (`Ardumine/kernel`).
 
 ## Runtime Filesystem Layout
 
@@ -417,10 +452,16 @@ FS/                              (mounted at "/")
     │   ├── HCore.Packages.HInit.deps.json
     │   ├── HCore.Modules.Base.dll
     │   └── ReadLine.dll
-    └── HCore.Packages.TestDemo/
+    ├── HCore.Packages.TestDemo/
+    │   ├── mpd
+    │   ├── HCore.Packages.TestDemo.dll
+    │   ├── HCore.Packages.TestDemo.pdb
+    │   ├── HCore.Packages.TestDemo.deps.json
+    │   └── HCore.Modules.Base.dll
+    └── HCore.Packages.Usb/
         ├── mpd
-        ├── HCore.Packages.TestDemo.dll
-        ├── HCore.Packages.TestDemo.pdb
-        ├── HCore.Packages.TestDemo.deps.json
+        ├── HCore.Packages.Usb.dll
+        ├── HCore.Packages.Usb.pdb
+        ├── HCore.Packages.Usb.deps.json
         └── HCore.Modules.Base.dll
 ```

@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\HCore.Modules.Base\HCore.Modules.Base.csproj"/>
+    </ItemGroup>
+
+    <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+        <Exec Command="mkdir -p $(ProjectDir)/../FS/packs/$(AssemblyName)/"/>
+        <Exec Command="cp -vr $(OutDir)/* $(ProjectDir)/../FS/packs/$(AssemblyName)/"/>
+    </Target>
+
+</Project>

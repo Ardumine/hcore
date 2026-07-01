@@ -39,4 +39,52 @@ public interface IModuleHost
     /// the new instance does not implement <typeparamref name="T"/>.
     /// </exception>
     T Spawn<T>(string moduleName, string instanceName) where T : IModule;
+
+    /// <summary>
+    /// Create a CHILD of the calling module (the owner is implicit: whichever
+    /// instance was injected with this <see cref="IModuleHost"/>), resolved by
+    /// concrete implementation type <typeparamref name="TImpl"/>. The child's
+    /// <paramref name="init"/> runs BEFORE it is published, so it is never
+    /// observable half-built. Appears at <c>/proc/&lt;owner&gt;/&lt;leafName&gt;</c>;
+    /// destroying the owner structurally reaps it.
+    /// </summary>
+    /// <exception cref="System.InvalidOperationException">
+    /// The owner is no longer running, a child named <paramref name="leafName"/>
+    /// already exists, or <paramref name="leafName"/> contains '/'.
+    /// </exception>
+    TImpl SpawnChild<TImpl>(string leafName, Action<TImpl>? init) where TImpl : IModule;
+
+    /// <summary>
+    /// Cross-package escape hatch for <see cref="SpawnChild{TImpl}"/>: create a
+    /// child of the calling module by module NAME (like <see cref="Spawn{T}"/>)
+    /// instead of by concrete type. Returns the child's interface, which
+    /// therefore must live in a shared contract assembly (e.g. <c>HCore.Modules.Base</c>)
+    /// for the caller to be able to use it at all.
+    /// </summary>
+    /// <exception cref="System.InvalidOperationException">
+    /// The module name is unknown, the owner is no longer running, a child named
+    /// <paramref name="leafName"/> already exists, or the new instance does not
+    /// implement <typeparamref name="T"/>.
+    /// </exception>
+    T SpawnChildByName<T>(string moduleName, string leafName, Action<T>? init) where T : IModule;
+
+    /// <summary>
+    /// Kill a child OF THE CALLING module. Owner-scoped: throws if
+    /// <paramref name="leafName"/> is not actually a child of this module.
+    /// Cascades to the child's own descendants, leaf-first.
+    /// </summary>
+    /// <exception cref="System.InvalidOperationException">
+    /// No such child, or it is not owned by the calling module.
+    /// </exception>
+    void KillChild(string leafName);
+
+    /// <summary>
+    /// Privileged cascade kill of ANY instance by its <c>/proc</c> path (or bare
+    /// instance name), regardless of ownership. Reaps the target and every
+    /// transitive descendant, leaf-first. No capability model exists yet, so
+    /// this is intentionally unrestricted — the shell's <c>kill</c> command uses
+    /// it; a module using it on another module's subtree is a documented gap.
+    /// </summary>
+    /// <exception cref="System.InvalidOperationException">Nothing is running at that path.</exception>
+    void Kill(string instancePath);
 }

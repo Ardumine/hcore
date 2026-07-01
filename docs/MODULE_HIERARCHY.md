@@ -1,7 +1,7 @@
 # Open Design Question — Module Hierarchy & Sub-Modules
 
-**Status:** ✅ DECIDED 2026-06-30 — **approach D (sub-host, via `ContainerImplement` + `SpawnChild`)**. Full spec in *Chosen design (D)* below. Not yet implemented (deferred; current build unaffected).
-**Scope:** future work. The current build (flat `/proc`, `Spawn` + path-based `GetModuleInterface`) already works and ships without this.
+**Status:** ✅ IMPLEMENTED 2026-07-01 — **approach D (flat registry + `ParentName` edge, via `ContainerImplement` + `SpawnChild`)**. Full spec in *Chosen design (D)* below; see *Implementation notes* at the end of this document for what actually shipped, including two concurrency fixes found and made during the build.
+**Scope:** shipped. `/proc` now nests parent→child, `ContainerImplement.SpawnChild`/`SpawnChildByName`/`KillChild` are the author surface, `IModuleHost.Kill` is the shell's privileged cascade kill, and `HCore.Packages.Usb` is the worked demo.
 **Related:** [ARCHITECTURE.md](ARCHITECTURE.md), [DESIGN.md](DESIGN.md).
 
 ---
@@ -194,8 +194,8 @@ public sealed class UsbModuleImplement : ContainerImplement, IUsb, IRunnable
 {
     public void Run()
     {
-        SpawnChild<IUsbDevice>("device0", d => ((UsbDeviceImplement)d).Init("SN-A", "1-1.2"));
-        SpawnChild<IUsbDevice>("device1", d => ((UsbDeviceImplement)d).Init("SN-B", "1-1.3"));
+        SpawnChild<UsbDeviceImplement>("device0", d => d.Init("SN-A", "1-1.2"));
+        SpawnChild<UsbDeviceImplement>("device1", d => d.Init("SN-B", "1-1.3"));
     }
     // No teardown — killing this module reaps device0/device1 automatically.
 }
@@ -236,17 +236,17 @@ On `SpawnChild`:
 5. **Cross-package safe:** child interfaces in Base; a different package can call the child.
 6. **One-verb author API:** `SpawnChild` only — no `new`, no service wiring, no name strings, no teardown.
 
-### Build plan (small, behind the current build)
-1. `ContainerImplement` + `SpawnChild`/`KillChild` in Base (+ the kernel-read child enumeration the base auto-implements).
-2. Kernel: parent→child edge + structural cascade reap + ownership check + init-before-publish in the create path.
-3. `ProcFileSystem`: nested rendering; `GetModuleInterface`/`InstanceNameFromPath`: nested-path resolution.
-4. Shell: `kill <instance>` (cascade); `spawn` stays create-only.
-5. Demo: `UsbModuleImplement` + `UsbDeviceImplement`; verify `ls /proc/usb`, `cat /proc/usb/device0/info`, and that `kill /proc/usb` reaps both.
+### Build plan (shipped 2026-07-01)
+1. ✅ `ContainerImplement` + `SpawnChild`/`SpawnChildByName`/`KillChild` in Base (`HCore.Modules.Base/ContainerImplement.cs`).
+2. ✅ Kernel: `ParentName` edge + structural cascade reap + ownership check + init-before-publish in the create path (`HCore.Main/Internal/ModuleHost.cs`, `ScopedModuleHost.cs`).
+3. ✅ `ProcFileSystem`: nested rendering by splitting instance keys on `/` (`HCore.Main/Vfs/ProcFileSystem.cs`); `GetModuleInterface`/`InstanceNameFromPath` already accepted composite keys unchanged.
+4. ✅ Shell: `kill <instance>` (cascade, privileged) added to `HCore.Packages.HInit/Init/InitImplement.cs`; `spawn` stays create-only.
+5. ✅ Demo: `HCore.Packages.Usb/` (`UsbModuleImplement` + `UsbDeviceImplement`); verified `ls /proc/usb`, `cat /proc/usb/device0/info`, and `kill /proc/usb` reaping both children.
 
-### Open questions to finalize at build time
-- **`SpawnChild` by type vs name:** a concrete-type form `SpawnChild<UsbDeviceImplement>(name, init)` (clean & type-safe for in-package children, and lets `init` receive the concrete type — removing the `((UsbDeviceImplement)d)` cast) vs a descriptor-name form (required for cross-package). Likely offer both.
-- **Sub-host shape:** a literal per-parent `ModuleHost` instance vs a `parentInstanceName`/edge field on the existing flat table. Both satisfy the acceptance criteria; the literal sub-host is conceptually cleaner, the flat+edge is less code.
-- **Init ergonomics:** prefer the typed `SpawnChild<TImpl>` above, or an `IInitializable<TArgs>` contract, to avoid the downcast in the example.
+### Open questions — resolved at build time
+- **`SpawnChild` by type vs name:** built **both**. `SpawnChild<TImpl>(leaf, init)` (concrete-type, in-package, typed `init` — no cast) is primary; `SpawnChildByName<T>(moduleName, leaf, init)` is the cross-package escape hatch, returning the interface.
+- **Sub-host shape:** went with the **flat table + `ParentName` edge** (less code, single source of truth), not a literal per-parent `ModuleHost`. The composite key (`"usb/device0"`) already encodes the tree; the edge just makes cascade/ownership authoritative instead of an unenforced naming convention.
+- **Init ergonomics:** built the typed `SpawnChild<TImpl>` form — no `IInitializable<TArgs>` contract was needed; the concrete-type generic already removes the downcast from the canonical example.
 
 ## Pros & Cons (per approach)
 
@@ -286,7 +286,17 @@ The second iteration (predecessor to this repo) **already built sub-modules — 
 
 ## Related open items (future work)
 
-- Process lifecycle: `kill`/exit/reap (instances are currently never removed).
+- Process lifecycle: `kill` (cascade reap) is built; `exit`/self-reap on `Run()` completion is not.
+- A capability model for `Kill` — today it is privileged and unrestricted (documented gap, see *Implementation notes* below).
 - `/proc/<m>/ctl` invocation (Plan 9 `ctl` model) and an `exposed` file listing callable members.
 - `/etc/services` bootstrap scripts run by the shell.
 - Shell as its own module, separate from the init process.
+
+## Implementation notes (2026-07-01)
+
+What actually shipped matches this spec, with two corrections found by an independent concurrency review before the build and folded into the code:
+
+1. **Owner-liveness re-check at publish time.** The spec's "init before publish" step re-checked only that the child's name was still free after `init` ran unlocked. That's not enough: a concurrent `Kill` of the *owner* while a child's `init` is running unlocked could publish the child under an already-reaped parent — an orphan the cascade never saw, invisible to the very tree structure that's supposed to make cascade authoritative. `SpawnChildCore` now re-checks **both** that the owner is still in the registry **and** that the name is still free before publishing; either failure discards the constructed child and throws.
+2. **`OnKilled()` runs after the lock is released, not inside it.** The natural first draft called `OnKilled()` for the whole leaf-first subtree inside the same lock session that collected and removed it. But `OnKilled()` is arbitrary module-authored code — it could block, touch the VFS, or call back into `Host` (including `Kill` on something else) — and the codebase's own rule (already true of `DescribeForProc()` when rendering `/proc`) is that module code must never run while the process table is locked. `KillLocked` now only collects the leaf-first subtree and removes it from the registry, still under the lock; the caller releases the lock and then calls `OnKilled()` over the returned snapshot.
+
+Neither changes the public shape of `ContainerImplement`/`IModuleHost` — both are internal to `ModuleHost`'s locking discipline. The kernel-callable-but-not-author-callable access for `OnKilled()`/`DescribeForProc()` (`protected internal` in `HCore.Modules.Base`, called from `HCore.Main`) needed one addition not anticipated in the spec: `HCore.Modules.Base/AssemblyInfo.cs` with `[assembly: InternalsVisibleTo("HCore.Main")]`, since `protected internal` alone doesn't cross an assembly boundary to a non-derived caller. Sibling packages remain unable to call these hooks on each other's instances — C# protected access is scoped to your own class hierarchy, and `InternalsVisibleTo` only extends internal-level access to the one named friend assembly.

@@ -131,6 +131,10 @@ public class InitImplement : BaseImplement, IInit
                 RequireArgs(args, 3, "usage: spawn <module-name> <instance-name>");
                 SpawnModule(args[1], args[2]);
                 return;
+            case "kill":
+                RequireArgs(args, 2, "usage: kill <instance>");
+                KillInstance(args[1]);
+                return;
             case "clear":
                 Console.Clear();
                 return;
@@ -155,6 +159,13 @@ public class InitImplement : BaseImplement, IInit
         // visible at /proc/<instanceName>; use `run` to run it if it is runnable.
         Host.Spawn<IModule>(moduleName, instanceName);
         Console.WriteLine($"spawned '{instanceName}' from '{moduleName}' (at /proc/{instanceName})");
+    }
+
+    private void KillInstance(string instancePath)
+    {
+        // Privileged cascade kill — reaps the target and every descendant.
+        Host.Kill(instancePath);
+        Console.WriteLine($"killed '{instancePath}'");
     }
 
     private void ListDirectory(string path)
@@ -185,6 +196,7 @@ public class InitImplement : BaseImplement, IInit
         Console.WriteLine("  append <file> <text>        Append text to file");
         Console.WriteLine("  spawn <module> <instance>   Create a new instance of a module (does not run it)");
         Console.WriteLine("  run <instance>              Run an already-spawned instance (e.g. /proc/m2)");
+        Console.WriteLine("  kill <instance>             Kill an instance and its children");
         Console.WriteLine("  clear                       Clear terminal");
     }
 

@@ -10,6 +10,7 @@ A modular microkernel runtime for C#. HCore makes building modular code and micr
 - **Sandboxed Filesystem Access** — Each module receives a proxy to the VFS with its own working directory
 - **Inter-Module Calls** — A module obtains a typed reference to an already-running instance through the kernel's module host (`Host.GetModuleInterface<T>(instancePath)`), with no compile-time coupling between the modules
 - **Modules as Processes** — `Host.Spawn<T>(module, instance)` creates the same module many times as independent named instances, each visible under `/proc`
+- **Module Hierarchy** — `ContainerImplement.SpawnChild<T>(name, init)` lets a module own real, stateful child instances nested at `/proc/<parent>/<child>`; killing the parent (`kill <instance>` in the shell) structurally reaps the whole subtree
 - **Kernel / User-Space Boundary** — Modules reach the kernel only through injected "system-call" interfaces (`Vfs`, `Host`); they have no ambient access to kernel internals
 - **Async Signaling** — `AdamPipe<T>` provides thread-safe producer-consumer messaging between modules
 
@@ -22,6 +23,7 @@ A modular microkernel runtime for C#. HCore makes building modular code and micr
 | `Logyt` | Class Library | Structured logging with console color support |
 | `HCore.Packages.HInit` | Class Library (Package) | Init module — provides a shell/REPL for interacting with the VFS |
 | `HCore.Packages.TestDemo` | Class Library (Package) | Demo package with two example modules |
+| `HCore.Packages.Usb` | Class Library (Package) | Demo package for the module hierarchy: a USB controller owning two device children |
 
 ## Prerequisites
 
@@ -71,11 +73,32 @@ module1.Func1();
 
 // Create a new named instance (like a process) — visible at /proc/<instance>, not run:
 Host.Spawn<IRunnable>("HCore.Packages.TestDemo.Module2", "worker-a").Run();
+
+// A module can own real, stateful CHILDREN — see below, ContainerImplement.
+Host.Kill("/proc/worker-a"); // privileged: reaps the instance and any children it owns
 ```
 
 The **path identifies _who_** you talk to; the **method call is _what_** you say; the **return value is data**. This separation is the heart of the design — see [DESIGN.md](docs/DESIGN.md).
 
 There are three levels: a **pack** (`/packs/<pack>/`, installed code), a **module** (a program defined by a descriptor inside the pack), and an **instance** (a running module, listed in `/proc/<name>/`).
+
+### Module Hierarchy (Sub-Modules)
+
+A module can extend `ContainerImplement` instead of `BaseImplement` to own real child instances, nested under it in `/proc` and reaped automatically when it's killed:
+
+```csharp
+public sealed class UsbModuleImplement : ContainerImplement, IUsb, IRunnable
+{
+    public void Run()
+    {
+        SpawnChild<UsbDeviceImplement>("device0", d => d.Init("SN-A", "1-1.2"));
+        SpawnChild<UsbDeviceImplement>("device1", d => d.Init("SN-B", "1-1.3"));
+    }
+    // No teardown — killing this module reaps device0/device1 automatically.
+}
+```
+
+See [MODULE_HIERARCHY.md](docs/MODULE_HIERARCHY.md) for the full design and [MODULE_AUTHORING.md](docs/MODULE_AUTHORING.md) for a walkthrough.
 
 ### The `mpd` File
 
@@ -88,9 +111,10 @@ MyPackage.pdb
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) — Boot sequence, VFS internals, assembly loading, the module host, kernel/user-space & system calls
+- [Architecture](docs/ARCHITECTURE.md) — Boot sequence, VFS internals, assembly loading, the module host, kernel/user-space & system calls, module hierarchy mechanics
 - [Design & Rationale](docs/DESIGN.md) — Why HCore is shaped this way: the core design questions, answered
-- [Module Authoring Guide](docs/MODULE_AUTHORING.md) — How to create your own modules (and call others)
+- [Module Hierarchy](docs/MODULE_HIERARCHY.md) — The sub-module design debate, chosen approach, and implementation notes
+- [Module Authoring Guide](docs/MODULE_AUTHORING.md) — How to create your own modules (and call others, and own children)
 - [Shell Guide](docs/SHELL.md) — The HInit shell commands
 - [API Reference](docs/API_REFERENCE.md) — Interface and class documentation
 

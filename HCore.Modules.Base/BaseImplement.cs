@@ -22,6 +22,32 @@ public abstract class BaseImplement : IModule
 	{
 		Host = host ?? throw new ArgumentNullException(nameof(host));
 	}
+
+	/// <summary>
+	/// This instance's own /proc identity (e.g. "usb/device0"). Kernel-injected
+	/// at creation, exactly like <see cref="Vfs"/>/<see cref="Host"/>.
+	/// </summary>
+	public string InstanceName { get; private set; } = "";
+
+	public void AttachInstanceName(string name)
+	{
+		InstanceName = name ?? throw new ArgumentNullException(nameof(name));
+	}
+
+	/// <summary>
+	/// Called by the kernel when this instance is reaped (killed directly, or as
+	/// part of a parent's cascade). Override to release resources; default is a
+	/// no-op. Runs outside the kernel's process-table lock.
+	/// </summary>
+	protected internal virtual void OnKilled()
+	{
+	}
+
+	/// <summary>
+	/// Module-authored extra lines shown in this instance's <c>/proc/&lt;name&gt;/info</c>
+	/// (e.g. a USB device's serial + location). Default is none.
+	/// </summary>
+	protected internal virtual string? DescribeForProc() => null;
 }
 
 internal sealed class EmptyModuleFileSystem : IModuleFileSystem
@@ -69,6 +95,14 @@ internal sealed class EmptyModuleHost : IModuleHost
 	public T GetModuleInterface<T>(string instancePath) where T : IModule => throw NotAttached();
 
 	public T Spawn<T>(string moduleName, string instanceName) where T : IModule => throw NotAttached();
+
+	public TImpl SpawnChild<TImpl>(string leafName, Action<TImpl>? init) where TImpl : IModule => throw NotAttached();
+
+	public T SpawnChildByName<T>(string moduleName, string leafName, Action<T>? init) where T : IModule => throw NotAttached();
+
+	public void KillChild(string leafName) => throw NotAttached();
+
+	public void Kill(string instancePath) => throw NotAttached();
 
 	private static InvalidOperationException NotAttached() => new("Module host is not attached.");
 }
