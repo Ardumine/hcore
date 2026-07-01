@@ -21,8 +21,13 @@ namespace HCore.Main.Vfs;
 public sealed class ProcFileSystem : IVirtualFileSystem
 {
     private readonly ModuleHost _host;
+    private readonly DataHost _dataHost;
 
-    public ProcFileSystem(ModuleHost host) => _host = host;
+    public ProcFileSystem(ModuleHost host, DataHost dataHost)
+    {
+        _host = host;
+        _dataHost = dataHost;
+    }
 
     public string Name => "procfs";
     public bool IsReadOnly => true;
@@ -48,6 +53,25 @@ public sealed class ProcFileSystem : IVirtualFileSystem
                     $"implements: {module.ImplementType.FullName}\n" +
                     (module.Details is null ? "" : module.Details + "\n");
                 moduleDir.AddChild(new ReadOnlyVirtualFile("info", moduleDir, Encoding.UTF8.GetBytes(info)));
+            }
+
+            // Data facets: one read-only file per facet, named after the facet,
+            // holding the producer's formatted current value (the "cat" path).
+            // Rebuilt on every access, so `cat /proc/<m>/<facet>` sees the latest.
+            foreach (var facet in _dataHost.GetFacetsForProc())
+            {
+                if (!nodes.TryGetValue(facet.InstanceName, out var moduleDir))
+                {
+                    continue; // instance gone between the two snapshots — skip.
+                }
+
+                var body = facet.FormatForCat() ?? "(no data published yet)\n";
+                if (!body.EndsWith('\n'))
+                {
+                    body += "\n";
+                }
+
+                moduleDir.AddChild(new ReadOnlyVirtualFile(facet.FacetName, moduleDir, Encoding.UTF8.GetBytes(body)));
             }
 
             return root;

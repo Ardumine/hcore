@@ -20,14 +20,16 @@ public sealed class ModuleHost : IModuleHost
     private readonly object _vfsProxyLock;
     private readonly IReadOnlyList<LoadedModuleDescriptor> _descriptors;
     private readonly Dictionary<Type, LoadedModuleDescriptor> _byImplType;
+    private readonly DataHost _dataHost;
 
     private readonly Dictionary<string, RunningInstance> _instances = [];
     private readonly object _instancesLock = new();
 
-    public ModuleHost(FileSystem vfs, object vfsProxyLock, IReadOnlyList<LoadedModuleDescriptor> descriptors)
+    public ModuleHost(FileSystem vfs, object vfsProxyLock, DataHost dataHost, IReadOnlyList<LoadedModuleDescriptor> descriptors)
     {
         _vfs = vfs;
         _vfsProxyLock = vfsProxyLock;
+        _dataHost = dataHost;
         _descriptors = descriptors;
 
         _byImplType = new Dictionary<Type, LoadedModuleDescriptor>();
@@ -107,7 +109,7 @@ public sealed class ModuleHost : IModuleHost
     public void Kill(string instancePath)
     {
         var name = InstanceNameFromPath(instancePath);
-        List<BaseImplement> reaped;
+        List<RunningInstance> reaped;
         lock (_instancesLock)
         {
             if (!_instances.ContainsKey(name))
@@ -216,7 +218,7 @@ public sealed class ModuleHost : IModuleHost
     internal void KillChildCore(string ownerName, string leafName)
     {
         var childName = $"{ownerName}/{leafName}";
-        List<BaseImplement> reaped;
+        List<RunningInstance> reaped;
         lock (_instancesLock)
         {
             if (!_instances.TryGetValue(childName, out var child) || child.ParentName != ownerName)
@@ -236,12 +238,13 @@ public sealed class ModuleHost : IModuleHost
     /// <see cref="RunningInstance.ParentName"/>), removes them all from
     /// <see cref="_instances"/>, and returns them leaf-first (deepest
     /// descendants first, the target itself last). Deliberately does NOT call
-    /// <see cref="BaseImplement.OnKilled"/> here — that is module-authored code
-    /// and, like <see cref="BaseImplement.DescribeForProc"/>, must never run
-    /// while the process table is locked. Callers release the lock and invoke
-    /// <see cref="NotifyKilled"/> on the returned snapshot afterwards.
+    /// <see cref="BaseImplement.OnKilled"/> or
+    /// <see cref="DataHost.NotifyProducerKilled"/> here — that is module/kernel
+    /// callback code and must never run while the process table is locked. Callers
+    /// release the lock and invoke <see cref="NotifyKilled"/> on the returned
+    /// snapshot afterwards.
     /// </summary>
-    private List<BaseImplement> KillLocked(string name)
+    private List<RunningInstance> KillLocked(string name)
     {
         var levels = new List<string> { name };
         var frontier = new Queue<string>();
@@ -259,23 +262,31 @@ public sealed class ModuleHost : IModuleHost
         // `levels` is root-first (breadth-first); reverse for a leaf-first reap order.
         levels.Reverse();
 
-        var reaped = new List<BaseImplement>(levels.Count);
+        var reaped = new List<RunningInstance>(levels.Count);
         foreach (var instanceName in levels)
         {
             if (_instances.Remove(instanceName, out var removed))
             {
-                reaped.Add(removed.Instance);
+                reaped.Add(removed);
             }
         }
 
         return reaped;
     }
 
-    private static void NotifyKilled(IEnumerable<BaseImplement> reaped)
+    /// <summary>
+    /// Runs the leaf-first reap callbacks OUTSIDE the process-table lock:
+    /// first tell every subscriber of a reaped producer's facets that the
+    /// producer is gone (so no live facet can keep publishing once its owner is
+    /// reaped), then let the instance release its own resources. Both are
+    /// module/kernel callback code and must not run under <see cref="_instancesLock"/>.
+    /// </summary>
+    private void NotifyKilled(IEnumerable<RunningInstance> reaped)
     {
         foreach (var instance in reaped)
         {
-            instance.OnKilled();
+            _dataHost.NotifyProducerKilled(instance.InstanceName);
+            instance.Instance.OnKilled();
         }
     }
 
@@ -342,6 +353,7 @@ public sealed class ModuleHost : IModuleHost
         instance.AttachHost(new ScopedModuleHost(this, instanceName));
         instance.AttachInstanceName(instanceName);
         instance.AttachLogger(new ModuleLogger(instanceName));
+        instance.AttachData(new ScopedDataHost(_dataHost, instanceName));
 
         return new RunningInstance(instanceName, instance, descriptor, parentName);
     }

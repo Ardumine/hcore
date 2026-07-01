@@ -75,15 +75,21 @@ public abstract class BaseImplement : IModule
     public IModuleHost Host { get; private set; }
     public void AttachHost(IModuleHost host);
 
+    public IDataHost Data { get; private set; }
+    public void AttachData(IDataHost data);
+
     public string InstanceName { get; private set; }
     public void AttachInstanceName(string name);
+
+    public IModuleLogger Logger { get; private set; }
+    public void AttachLogger(IModuleLogger logger);
 
     protected internal virtual void OnKilled();
     protected internal virtual string? DescribeForProc();
 }
 ```
 
-Abstract base class that all module implementations must extend. Provides the two kernel "system-call" surfaces (`Vfs`, `Host`), this instance's own `/proc` identity (`InstanceName`), and two lifecycle hooks the kernel calls directly.
+Abstract base class that all module implementations must extend. Provides the four kernel "system-call" surfaces (`Vfs`, `Host`, `Data`, `Logger`), this instance's own `/proc` identity (`InstanceName`), and two lifecycle hooks the kernel calls directly.
 
 | Member | Description |
 |--------|-------------|
@@ -91,12 +97,16 @@ Abstract base class that all module implementations must extend. Provides the tw
 | `AttachVfs(vfs)` | Called by the kernel to inject the module's filesystem proxy. Throws `ArgumentNullException` if `vfs` is null. |
 | `Host` | The module host injected by the kernel — the module's gateway to other modules. Initially a null-object that throws on any operation. Every created instance actually receives a `ScopedModuleHost` bound to its own instance name, not the raw kernel object. |
 | `AttachHost(host)` | Called by the kernel to inject the module host. Throws `ArgumentNullException` if `host` is null. |
+| `Data` | The data-plane host injected by the kernel — expose/read/subscribe data facets. Initially a null-object (`EmptyDataHost`) that throws on any operation. Every created instance receives a `ScopedDataHost` bound to its own instance name. See [Data Plane](#data-plane). |
+| `AttachData(data)` | Called by the kernel at creation, exactly like `AttachVfs`/`AttachHost`. |
 | `InstanceName` | This instance's own `/proc` identity (e.g. `"usb/device0"`). Kernel-injected, like `Vfs`/`Host`. |
 | `AttachInstanceName(name)` | Called by the kernel at creation, exactly like `AttachVfs`/`AttachHost`. |
-| `OnKilled()` | Called by the kernel when this instance is reaped — killed directly, or as part of a parent's cascade. Override to release resources; default is a no-op. Runs *after* the kernel releases its process-table lock, leaf-first across a cascade. `protected internal` — see [Module Hierarchy](MODULE_HIERARCHY.md) for why only the kernel or a subclass can call it. |
+| `Logger` | Structured logger injected by the kernel; description = instance name. Defaults to a no-op logger. |
+| `AttachLogger(logger)` | Called by the kernel at creation, exactly like `AttachVfs`/`AttachHost`. |
+| `OnKilled()` | Called by the kernel when this instance is reaped — killed directly, or as part of a parent's cascade. Override to release resources; default is a no-op. Runs *after* the kernel releases its process-table lock (and after `DataHost.NotifyProducerKilled` fires `ProducerKilled` to the reaped instance's subscribers), leaf-first across a cascade. `protected internal` — see [Module Hierarchy](MODULE_HIERARCHY.md) for why only the kernel or a subclass can call it. |
 | `DescribeForProc()` | Module-authored extra lines shown in this instance's `/proc/<name>/info` (e.g. a device's serial/location). Default `null` (no extra lines). Same access as `OnKilled()`. |
 
-**Usage:** Module authors extend this class and use `Vfs` and `Host`. The kernel calls `AttachVfs()`, `AttachHost()`, and `AttachInstanceName()` before invoking any module methods. Override `OnKilled()`/`DescribeForProc()` only if your module needs cleanup or wants extra `/proc` info — most authors extend `ContainerImplement` instead of `BaseImplement` when they need children.
+**Usage:** Module authors extend this class and use `Vfs`, `Host`, `Data`, and `Logger`. The kernel calls the `Attach*` methods before invoking any module methods. Override `OnKilled()`/`DescribeForProc()` only if your module needs cleanup or wants extra `/proc` info — most authors extend `ContainerImplement` instead of `BaseImplement` when they need children.
 
 ---
 
@@ -260,6 +270,174 @@ A thread-safe producer-consumer signaling queue for inter-module communication. 
 | `Wait(ct)` | Blocks until an item is available, then dequeues and returns it. Supports cancellation via `CancellationToken`. Throws `OperationCanceledException` if cancelled. |
 
 **Thread safety:** Both methods are fully thread-safe. Multiple producers and consumers can operate concurrently.
+
+---
+
+## Data Plane
+
+The data-plane "system call" surface — a module's door for exposing its own data facets and
+reading/subscribing to other modules' facets. Implemented by the kernel (`DataHost`) and injected
+into each module as `BaseImplement.Data` (in practice a `ScopedDataHost` bound to the instance's own
+name). See [Data Plane Guide](DATA_PLANE.md) for the full guide and the
+[design rationale](DATA_PLANE_DESIGN.md).
+
+---
+
+### IDataHost
+
+```csharp
+namespace HCore.Modules.Base;
+
+public interface IDataHost
+{
+    IExposedData<T> ExposeData<T>(
+        string facetName,
+        FacetKind kind,
+        DispatchPolicy policy = DispatchPolicy.Default,
+        int bound = -1,
+        Func<T, string>? formatter = null) where T : class;
+
+    T? ReadData<T>(string facetPath) where T : class;
+
+    ISubscription Subscribe<T>(
+        string facetPath,
+        Func<DataEvent<T>, CancellationToken, ValueTask> handler,
+        Action<DisconnectReason>? onDisconnected = null) where T : class;
+}
+```
+
+| Method | Description |
+|--------|-------------|
+| `ExposeData<T>(facetName, kind, policy, bound, formatter)` | Register a data facet under THIS instance at `/proc/<me>/<facetName>` and return a handle to push frames to. `facetName` cannot contain `/`. `policy=Default` infers from `kind`; `bound=-1` uses the per-kind default (Cell=1, Stream=64). Throws if a facet with that name already exists on this instance. |
+| `ReadData<T>(facetPath)` | One-shot snapshot of the facet's most-recent published value (non-draining). Returns `null` if nothing published yet. Throws `InvalidOperationException` if no facet at the path, or the facet's type is not `T`. |
+| `Subscribe<T>(facetPath, handler, onDisconnected)` | Subscribe to a facet's push stream. `handler` runs on a thread-pool worker per frame; `onDisconnected` is the optional callback fired on a `DisconnectReason`. Returns an `ISubscription` whose `.State` is always observable (the mandatory signal). Throws if no facet at the path, or the facet's type is not `T` — the producer must have `ExposeData`d it first. |
+
+A facet path is `/proc/<instance>/<facet>`; the facet is the **last** segment, the instance is
+everything before it (instance names may be composite, e.g. `/proc/usb/device0/scan_data`). A bare
+path without `/proc/` (e.g. `"lidar/scan_data"`) is also accepted.
+
+---
+
+### IExposedData\<T\>
+
+```csharp
+namespace HCore.Modules.Base;
+
+public interface IExposedData<T> where T : class
+{
+    void Publish(T value);
+    void Set(T value);
+}
+```
+
+The producer handle returned by `ExposeData`. `Publish` fans `value` out to every subscriber
+according to the facet's dispatch policy. `Set` is a V2-parity alias for `Publish`.
+
+**Zero-copy:** the reference is passed straight to subscribers. The producer must treat `value` as
+immutable after publishing (freeze-after-publish contract — allocate a fresh frame per publish).
+Not enforced; a producer that breaks it owns the resulting torn reads.
+
+---
+
+### DataEvent\<T\>
+
+```csharp
+namespace HCore.Modules.Base;
+
+public readonly struct DataEvent<T> where T : class
+{
+    public T Data { get; init; }
+    public long Sequence { get; init; }
+    public long? InterFrameDelta { get; init; }
+}
+```
+
+One delivered frame.
+
+| Member | Description |
+|--------|-------------|
+| `Data` | The frame payload (immutable reference; treat as read-only). |
+| `Sequence` | PER-FACET firing count (gap detection). Independent per facet, not per producer. A gap = the kernel dropped frames between them. |
+| `InterFrameDelta` | Publish-to-publish duration in `Stopwatch` ticks (a portable *duration*, not an absolute time). `null` on the first frame. The rate-mismatch diagnostic: non-derivable from consumer arrivals when the consumer is backed up. Convert: `value * 1000.0 / Stopwatch.Frequency` (ms). |
+
+---
+
+### ISubscription
+
+```csharp
+namespace HCore.Modules.Base;
+
+public interface ISubscription : IDisposable
+{
+    SubscriptionState State { get; }
+    DisconnectReason? DisconnectReason { get; }
+    long ConsumerSkippedCount { get; }
+}
+```
+
+The handle returned by `Subscribe`. The `State`/`DisconnectReason` are **always observable** (the
+mandatory signal); the `onDisconnected` callback is the optional interruption.
+
+| Member | Description |
+|--------|-------------|
+| `State` | `Active` / `Tripped` / `Disposed`. Always pullable. `Tripped` = the breaker fired. |
+| `DisconnectReason` | Why it tripped, or `null` while `Active`. `Overload` / `HandlerException` / `ProducerKilled` / `Disposed`. |
+| `ConsumerSkippedCount` | Frames skipped because the handler THREW (stream tolerate-and-continue). Kernel overflow drops are NOT here — they are observable as `Sequence` gaps. |
+
+`Dispose()` = unsubscribe, idempotent. Stops dispatching new frames, lets any in-flight callback
+finish (does not block, does not interrupt mid-callback). A tripped subscription is already dead;
+dispose is a no-op. Re-subscribe by calling `Subscribe` again (starts fresh — no backlog).
+
+---
+
+### FacetKind
+
+```csharp
+public enum FacetKind { Cell, Stream }
+```
+
+The primitive a facet exposes. Fixes the default dispatch policy AND the handler-exception policy.
+
+| Value | Semantics | Default dispatch | Handler throws |
+|-------|-----------|------------------|----------------|
+| `Cell` | latest value; read = current; subscribe = on-change | `Coalesce` | one-strike-and-out |
+| `Stream` | ordered sequence; don't drop frames | `OrderedQueue` | tolerate-and-continue; trip on sustained throws |
+
+---
+
+### DispatchPolicy
+
+```csharp
+public enum DispatchPolicy { Default, WaitForAll, Coalesce, OrderedQueue, ParallelUnordered }
+```
+
+How `Publish` fans a frame out to subscribers.
+
+| Value | Behavior | Producer blocks? |
+|-------|----------|------------------|
+| `Default` | Infer from `FacetKind` (Cell→`Coalesce`, Stream→`OrderedQueue`). | (per inferred) |
+| `WaitForAll` | Blocking backpressure: `Publish` waits for every handler. Opt-in, never default. | yes |
+| `Coalesce` | Fire-and-forget; keep newest, drop intermediates (cell). | no |
+| `OrderedQueue` | Fire-and-forget; bounded ordered queue, drop-oldest (stream). | no |
+| `ParallelUnordered` | Fire-and-forget; bounded-parallelism pool, independent items (unordered). | no |
+
+Every non-`WaitForAll` policy gives each subscriber its own bounded `Channel<T>` (isolation unit)
+and a single thread-pool consumer task (execution unit) — no thread explosion, no cross-subscriber
+head-of-line blocking.
+
+---
+
+### SubscriptionState / DisconnectReason
+
+```csharp
+public enum SubscriptionState { Active, Tripped, Disposed }
+public enum DisconnectReason { Overload, HandlerException, ProducerKilled, Disposed }
+```
+
+`DisconnectReason` distinguishes the three breaker trip causes (plus intentional dispose):
+`Overload` (sustained queue overflow, stream only) / `HandlerException` (cell: one-strike; stream:
+sustained throws) / `ProducerKilled` (the producing instance was reaped). All three funnel into the
+same disconnect path. See [Data Plane Guide → Circuit breaker](DATA_PLANE.md#the-circuit-breaker).
 
 ---
 

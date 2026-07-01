@@ -271,6 +271,39 @@ var same = Host.GetModuleInterface<IRunnable>("/proc/worker-a");
 
 > **Where the interface lives matters.** For the cast inside these calls to succeed, the interface type (`IModule1` above) must be the *same* `Type` on both sides. Put shared interfaces in `HCore.Modules.Base` (or another assembly loaded once in the default context); see [ARCHITECTURE.md → Assembly Isolation](ARCHITECTURE.md#assembly-isolation) and [DESIGN.md](DESIGN.md).
 
+## Streaming Data Between Modules (Data Plane)
+
+`Host` is for *calling* a module synchronously. For **streaming live data** — a sensor publishing
+frames that one or more consumers receive — use the data plane, reached through the third injected
+handle, `Data` (`IDataHost`). A producer exposes a facet at `/proc/<instance>/<facet>`; a consumer
+reads a snapshot or subscribes to a push stream. Full guide: [DATA_PLANE.md](DATA_PLANE.md).
+
+```csharp
+// Producer — expose a facet and push frames to the returned handle.
+var scan = Data.ExposeData<ScanFrame>("scan_data", FacetKind.Stream, formatter: FormatFrame);
+scan.Publish(frame);   // fans out to every subscriber, zero-copy by reference
+
+// Consumer — snapshot (pull) and/or subscribe (push), same address.
+ScanFrame? latest = Data.ReadData<ScanFrame>("/proc/lidar/scan_data");
+ISubscription sub = Data.Subscribe<ScanFrame>(
+    "/proc/lidar/scan_data",
+    (DataEvent<ScanFrame> e, CancellationToken ct) => { /* per frame */ },
+    reason => { /* optional: breaker trip / producer killed */ });
+```
+
+Two primitives: **cell** (latest value, coalesce-to-newest) and **stream** (ordered queue,
+drop-oldest). Each subscriber gets its own bounded queue + thread-pool consumer (a slow consumer
+can't stall the producer or siblings), with a circuit breaker that trips on sustained overload,
+handler failure, or producer death (`kill` fires `ProducerKilled` to every subscriber). The shell
+can `cat /proc/lidar/scan_data` to inspect the current value (via the formatter hook).
+
+> **Cross-package type rule.** For a producer and consumer in *different* packages to share a facet,
+> the frame type `T` must live in `HCore.Modules.Base` (different AssemblyLoadContext ⇒ different
+> `Type`). Same-package producer+consumer may use a package-local type. See
+> [DATA_PLANE.md → Cross-package type rule](DATA_PLANE.md#cross-package-type-rule).
+
+The worked demo is `HCore.Packages.Sensor` (`LidarImplement` + `SlamImplement`).
+
 ## Running and Spawning from the Shell
 
 The shell (in its own package, `HCore.Packages.HShell`) spawns a module by its descriptor `Name`, then runs an already-spawned instance by its `/proc` path:

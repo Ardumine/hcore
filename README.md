@@ -9,6 +9,7 @@ A modular microkernel runtime for C#. HCore makes building modular code and micr
 - **Virtual File System (VFS)** — A union-mount filesystem that layers host directories, in-memory storage, and synthetic devices under a single path hierarchy
 - **Sandboxed Filesystem Access** — Each module receives a proxy to the VFS with its own working directory
 - **Inter-Module Calls** — A module obtains a typed reference to an already-running instance through the kernel's module host (`Host.GetModuleInterface<T>(instancePath)`), with no compile-time coupling between the modules
+- **Data Plane** — A module exposes live data as a facet at `/proc/<m>/<facet>` (`Data.ExposeData<T>`); consumers take a snapshot (`ReadData<T>`) or subscribe to a push stream (`Subscribe<T>`) with per-subscriber queues, cell/stream primitives, four dispatch policies, and a circuit breaker
 - **Modules as Processes** — `Host.Spawn<T>(module, instance)` creates the same module many times as independent named instances, each visible under `/proc`
 - **Module Hierarchy** — `ContainerImplement.SpawnChild<T>(name, init)` lets a module own real, stateful child instances nested at `/proc/<parent>/<child>`; killing the parent (`kill <instance>` in the shell) structurally reaps the whole subtree
 - **Kernel / User-Space Boundary** — Modules reach the kernel only through injected "system-call" interfaces (`Vfs`, `Host`); they have no ambient access to kernel internals
@@ -25,6 +26,7 @@ A modular microkernel runtime for C#. HCore makes building modular code and micr
 | `HCore.Packages.HShell` | Class Library (Package) | The interactive shell (`IShell`), with an `ICommand`+registry dispatch |
 | `HCore.Packages.TestDemo` | Class Library (Package) | Demo package with two example modules |
 | `HCore.Packages.Usb` | Class Library (Package) | Demo package for the module hierarchy: a USB controller owning two device children |
+| `HCore.Packages.Sensor` | Class Library (Package) | Demo package for the data plane: a lidar producer streaming `scan_data` to a SLAM consumer |
 
 ## Prerequisites
 
@@ -114,6 +116,7 @@ MyPackage.pdb
 
 - [Architecture](docs/ARCHITECTURE.md) — Boot sequence, VFS internals, assembly loading, the module host, kernel/user-space & system calls, module hierarchy mechanics
 - [Design & Rationale](docs/DESIGN.md) — Why HCore is shaped this way: the core design questions, answered
+- [Data Plane Guide](docs/DATA_PLANE.md) — Expose, stream, and consume live data facets (cell/stream, dispatch, breaker, `cat`)
 - [Module Hierarchy](docs/MODULE_HIERARCHY.md) — The sub-module design debate, chosen approach, and implementation notes
 - [Module Authoring Guide](docs/MODULE_AUTHORING.md) — How to create your own modules (and call others, and own children)
 - [Shell Guide](docs/SHELL.md) — Shell commands and the `/etc/services` service model

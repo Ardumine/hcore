@@ -11,6 +11,7 @@ graph TB
         VFS[FileSystem<br/>Union Mount Manager]
         Loader[ModPackAssemblyLoadContext<br/>Isolated Assembly Loader]
         MHost[ModuleHost<br/>Live module registry & broker]
+        DHost[DataHost<br/>Data facet broker]
     end
 
     subgraph VFSProviders["VFS Providers"]
@@ -24,6 +25,7 @@ graph TB
         HInit[HCore.Packages.HInit<br/>Init Shell]
         TestDemo[HCore.Packages.TestDemo<br/>Demo Modules]
         Usb[HCore.Packages.Usb<br/>Module Hierarchy Demo]
+        Sensor[HCore.Packages.Sensor<br/>Data Plane Demo]
     end
 
     subgraph Shared["Shared Contracts"]
@@ -34,6 +36,7 @@ graph TB
     Program --> VFS
     Program --> Loader
     Program --> MHost
+    Program --> DHost
     VFS --> Host
     VFS --> Dev
     VFS --> Mem
@@ -41,6 +44,8 @@ graph TB
     Loader --> Packages
     MHost -->|instantiates| Packages
     MHost --> Proc
+    MHost -->|kill → NotifyProducerKilled| DHost
+    DHost -->|facet files| Proc
     Kernel --> Shared
     Packages --> Base
 ```
@@ -60,8 +65,10 @@ The only way a module reaches the kernel is through interfaces that are (a) decl
 |--------------------------|--------------------------------|---------------|
 | `BaseImplement.Vfs : IModuleFileSystem` | `ModuleFileSystemProxy` → `FileSystem` | file calls: open / read / write / list … |
 | `BaseImplement.Host : IModuleHost` | `ModuleHost` | process / IPC calls: get / spawn / resolve |
+| `BaseImplement.Data : IDataHost` | `DataHost` | data calls: expose / read / subscribe (live data facets) |
+| `BaseImplement.Logger : IModuleLogger` | `ModuleLogger` | log calls: I / W / E |
 
-A module makes a "syscall" simply by calling a method on `Vfs` or `Host`. Because the implementation lives in the kernel and only a contract type crosses the boundary, a module cannot escalate beyond what those interfaces expose — the injected handles **are** its capabilities. Adding a new kernel capability (e.g. `Spawn`) is therefore exactly "adding a new system call": declare it on `IModuleHost`, implement it in `ModuleHost`.
+A module makes a "syscall" simply by calling a method on `Vfs`, `Host`, `Data`, or `Logger`. Because the implementation lives in the kernel and only a contract type crosses the boundary, a module cannot escalate beyond what those interfaces expose — the injected handles **are** its capabilities. Adding a new kernel capability (e.g. `Spawn`) is therefore exactly "adding a new system call": declare it on the relevant interface (`IModuleHost`, `IDataHost`, …), implement it in the kernel.
 
 ## Boot Sequence
 
@@ -97,7 +104,7 @@ sequenceDiagram
 
     Main->>Host: Spawn<IRunnable>("HCore.Packages.HInit.Init", "init")
     Host->>Module: Activator.CreateInstance(ImplementType)
-    Host->>Module: AttachVfs(ModuleFileSystemProxy) + AttachHost(host)
+    Host->>Module: AttachVfs + AttachHost + AttachData + AttachLogger
     Host-->>Main: init instance (at /proc/init)
     Main->>Module: Run()
     Module-->>Main: (returns when user exits)
@@ -118,7 +125,7 @@ sequenceDiagram
 7. **Register modules** — Store `LoadedModuleDescriptor` (descriptor + parent pack reference) in a global list
 8. **Create the module host** — Instantiate `ModuleHost` over the registered descriptors. It owns the live module instances and brokers references between modules.
 9. **Mount `/proc`** — Mount `ProcFileSystem` so running modules become visible in the VFS.
-10. **Spawn init** — Ask the host to `Spawn` `"HCore.Packages.HInit.Init"` as the instance named `init`. The host constructs the instance, injects its VFS (`AttachVfs`) and itself (`AttachHost`), and registers it at `/proc/init`. (`Spawn` is the create operation — look-up via `GetModuleInterface` never creates.)
+10. **Spawn init** — Ask the host to `Spawn` `"HCore.Packages.HInit.Init"` as the instance named `init`. The host constructs the instance, injects its kernel services (`AttachVfs`, `AttachHost`, `AttachData`, `AttachLogger` — each a `Scoped*` facade or proxy bound to the instance), and registers it at `/proc/init`. (`Spawn` is the create operation — look-up via `GetModuleInterface` never creates.)
 11. **Run** — Call `Run()` on the init module; the kernel blocks until it returns.
 
 ## Virtual File System
@@ -330,7 +337,7 @@ The init shell exposes this interactively: `spawn <module> <instance>` creates a
 
 ### /proc — the running-module view
 
-`ProcFileSystem` mounts at `/proc` and renders the host's live instances as a read-only tree, rebuilt on every access:
+`ProcFileSystem` mounts at `/proc` and renders the host's live instances as a read-only tree, rebuilt on every access. Each instance directory gains an `info` file (from `DescribeForProc()`); if the instance has exposed data facets (`Data.ExposeData`), each facet also appears as a read-only file named after the facet, holding the producer's formatted current value — so `cat /proc/<m>/<facet>` inspects live data:
 
 ```
 / $ ls /proc
@@ -398,8 +405,8 @@ The mechanism above is the **typed** path: the caller imports the target's inter
 - **Full process lifecycle** — `kill` (cascade reap) is built — see *Module Hierarchy* below. `exit`/self-reap is not: a module still cannot signal its own completion and be cleaned up automatically when `Run()` returns; something else must call `Kill` on it.
 - **Service bootstrap** — **built.** `/etc/services/*.svc` are shell scripts run by init at boot (and managed at runtime via the `service` command). Each service's primary instance is named after its file; `service start/stop/restart/status/list` drives the lifecycle through `IServiceManager` (implemented by init). See [SHELL.md](SHELL.md).
 - **Shell as its own module** — **built.** The shell lives in its own package `HCore.Packages.HShell` (`IShell`); init (PID 1, `/proc/init`) spawns two shell children: `/proc/init/svc` (a worker used only for `RunScript`) and `/proc/init/console` (the interactive REPL).
-- **`ctl` / `data` file invocation** — driving a module by writing to `/proc/<name>/ctl` (the Plan 9 model), making modules scriptable straight from the shell.
-- **Out-of-process / remote modules** — would add a serialization layer; the typed proxy could then sit over a message transport unchanged.
+- **`ctl` / `data` file invocation** — the `data` read half is **built**: `cat /proc/<m>/<facet>` inspects a producer's current value via the formatter hook (see [Data Plane Guide](DATA_PLANE.md)). The `ctl` write half (driving a module by writing to `/proc/<name>/ctl`, the Plan 9 model) is still future work — it pairs with dynamic invocation below.
+- **Out-of-process / remote modules** — would add a serialization layer; the typed proxy could then sit over a message transport unchanged. The data plane's `(Sequence, InterFrameDelta)` is forward-compatible and works unchanged when AFCP arrives.
 - **Capability model for `Kill`** — today `IModuleHost.Kill` is privileged and unrestricted (any holder of a `Host` can kill any instance by path); only `KillChild` is owner-scoped. A real fix needs a permission layer that doesn't exist yet.
 
 ## Module Hierarchy — Sub-Modules
@@ -458,10 +465,16 @@ FS/                              (mounted at "/")
     │   ├── HCore.Packages.TestDemo.pdb
     │   ├── HCore.Packages.TestDemo.deps.json
     │   └── HCore.Modules.Base.dll
-    └── HCore.Packages.Usb/
+    ├── HCore.Packages.Usb/
         ├── mpd
         ├── HCore.Packages.Usb.dll
         ├── HCore.Packages.Usb.pdb
         ├── HCore.Packages.Usb.deps.json
+        └── HCore.Modules.Base.dll
+    └── HCore.Packages.Sensor/
+        ├── mpd
+        ├── HCore.Packages.Sensor.dll
+        ├── HCore.Packages.Sensor.pdb
+        ├── HCore.Packages.Sensor.deps.json
         └── HCore.Modules.Base.dll
 ```

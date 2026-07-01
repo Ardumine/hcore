@@ -47,6 +47,18 @@ public abstract class BaseImplement : IModule
 	}
 
 	/// <summary>
+	/// The data-plane "system call" surface a module uses to expose its own data
+	/// facets and to read/subscribe to other modules' facets. Attached by the
+	/// kernel at creation, exactly like <see cref="Vfs"/>/<see cref="Host"/>.
+	/// </summary>
+	public IDataHost Data { get; private set; } = EmptyDataHost.Instance;
+
+	public void AttachData(IDataHost data)
+	{
+		Data = data ?? throw new ArgumentNullException(nameof(data));
+	}
+
+	/// <summary>
 	/// Called by the kernel when this instance is reaped (killed directly, or as
 	/// part of a parent's cascade). Override to release resources; default is a
 	/// no-op. Runs outside the kernel's process-table lock.

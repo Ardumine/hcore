@@ -29,10 +29,11 @@ internal static class Program
         // The module host knows every loaded module and brokers references
         // between them. It is what a module talks to when it wants to call
         // another module.
-        var host = new ModuleHost(_vfs, _vfsModuleProxyLock, _loadedModuleDescriptors);
+        var dataHost = new DataHost();
+        var host = new ModuleHost(_vfs, _vfsModuleProxyLock, dataHost, _loadedModuleDescriptors);
 
         // Expose the running modules as a live /proc tree (like Linux/Plan 9).
-        _vfs.Mount("/proc", new ProcFileSystem(host));
+        _vfs.Mount("/proc", new ProcFileSystem(host, dataHost));
 
         // The init module (PID 1) — the kernel spawns it explicitly, then runs it.
         var initModule = host.Spawn<IRunnable>("HCore.Packages.HInit.Init", "init");
