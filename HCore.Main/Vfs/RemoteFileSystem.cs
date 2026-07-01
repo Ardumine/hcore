@@ -5,24 +5,29 @@ using System.Text;
 namespace HCore.Main.Vfs;
 
 /// <summary>
-/// A read-only <see cref="IVirtualFileSystem"/> backed by a remote AFCP peer.
+/// A read-write <see cref="IVirtualFileSystem"/> backed by a remote AFCP peer.
 /// Serves the peer's entire root tree (not just <c>/proc</c>): the peer's
 /// <c>VfsAfcpProvider</c> proxies its kernel <see cref="FileSystem"/>, which
-/// mounts <c>/proc</c>, <c>/etc</c>, <c>/dev</c>, etc.
+/// mounts <c>/proc</c>, <c>/etc</c>, <c>/dev</c>, etc. No capability model exists
+/// yet (TODO.md §C3) — any mounting peer can write anywhere under the served
+/// root, same trusted-LAN gap as <c>Kill</c>.
 ///
 /// The tree is **lazy** (9P-style): each <see cref="RemoteDirectory"/> fetches its
 /// entries via a fresh <see cref="AfcpClient.SyncAsync"/> on access, and each
 /// <see cref="RemoteFile"/> fetches its bytes via <see cref="AfcpClient.ReadAsync"/>
 /// on read — so <c>ls</c> walks into one directory at a time and <c>cat</c> always
 /// sees the latest content (a live <c>/proc</c> facet is re-read on every access).
-/// Nothing is cached.
+/// Nothing is cached. Writes (<see cref="AfcpClient.WriteAsync"/>,
+/// <see cref="AfcpClient.MkDirAsync"/>, <see cref="AfcpClient.RemoveAsync"/>) are
+/// whole-file, single round-trip operations — no chunked/streaming write (see
+/// TODO.md §C7e).
 /// </summary>
 internal sealed class RemoteFileSystem : IVirtualFileSystem, IDisposable
 {
     private readonly AfcpClient _client;
 
     public string Name => "afcp-remote";
-    public bool IsReadOnly => true;
+    public bool IsReadOnly => false;
     public string RemoteEndpoint { get; }
 
     public RemoteFileSystem(AfcpClient client, string mountPoint)
@@ -94,9 +99,36 @@ internal sealed class RemoteDirectory : VirtualNode, IVirtualDirectory
             ? ToNode(entry)
             : null;
 
-    public IVirtualDirectory CreateDirectory(string name) => throw new InvalidOperationException("Filesystem is read-only.");
-    public bool TryDelete(string name) => throw new InvalidOperationException("Filesystem is read-only.");
-    public IVirtualFile CreateFile(string name, bool overwrite = true, ReadOnlySpan<byte> initialData = default) => throw new InvalidOperationException("Filesystem is read-only.");
+    public IVirtualDirectory CreateDirectory(string name)
+    {
+        var childRemote = ChildRemotePath(_remotePath, name);
+        var res = _client.MkDirAsync(childRemote).GetAwaiter().GetResult();
+        if (!res.Success)
+        {
+            throw new IOException(res.Error ?? $"Failed to create directory '{childRemote}' on the remote peer.");
+        }
+
+        return new RemoteDirectory(name, this, _client, childRemote);
+    }
+
+    public bool TryDelete(string name)
+    {
+        var childRemote = ChildRemotePath(_remotePath, name);
+        var res = _client.RemoveAsync(childRemote).GetAwaiter().GetResult();
+        return res.Success;
+    }
+
+    public IVirtualFile CreateFile(string name, bool overwrite = true, ReadOnlySpan<byte> initialData = default)
+    {
+        var childRemote = ChildRemotePath(_remotePath, name);
+        var res = _client.WriteAsync(childRemote, initialData.ToArray(), overwrite).GetAwaiter().GetResult();
+        if (!res.Success)
+        {
+            throw new IOException(res.Error ?? $"Failed to write '{childRemote}' on the remote peer.");
+        }
+
+        return new RemoteFile(name, this, _client, childRemote);
+    }
 
     private IVirtualNode ToNode(DirEntry entry)
     {
@@ -108,9 +140,12 @@ internal sealed class RemoteDirectory : VirtualNode, IVirtualDirectory
 }
 
 /// <summary>
-/// A read-only file whose content is fetched from the remote AFCP peer on every
-/// read via <see cref="AfcpClient.ReadAsync"/> — never cached, so <c>cat</c> on a
-/// live <c>/proc</c> facet always reflects the latest frame.
+/// A file whose content is fetched from the remote AFCP peer on every read via
+/// <see cref="AfcpClient.ReadAsync"/> — never cached, so <c>cat</c> on a live
+/// <c>/proc</c> facet always reflects the latest frame. Writes
+/// (<see cref="Write"/>, or a write-access <see cref="GetStream"/>) are buffered
+/// locally and sent as a single whole-file <see cref="AfcpClient.WriteAsync"/>
+/// round-trip — AFCP has no chunked/streaming write (TODO.md §C7e).
 /// </summary>
 internal sealed class RemoteFile : VirtualNode, IVirtualFile
 {
@@ -132,12 +167,29 @@ internal sealed class RemoteFile : VirtualNode, IVirtualFile
 
     public Stream GetStream(FileMode mode = FileMode.Open, FileAccess access = FileAccess.Read)
     {
-        if (access != FileAccess.Read)
+        if (access == FileAccess.Read)
         {
-            throw new InvalidOperationException("File is read-only.");
+            return new MemoryStream(Fetch(), writable: false);
         }
 
-        return new MemoryStream(Fetch(), writable: false);
+        // Append and Open(OrCreate) preserve existing remote content (seeded
+        // then overwritten from the start, mirroring a real file handle);
+        // Create/CreateNew/Truncate start from an empty buffer. Either way the
+        // whole buffer is sent back as one Write on Dispose.
+        byte[] initial = Array.Empty<byte>();
+        if (mode is FileMode.Append or FileMode.Open or FileMode.OpenOrCreate)
+        {
+            try { initial = Fetch(); }
+            catch (FileNotFoundException) { /* nothing to seed; start empty */ }
+        }
+
+        var stream = new RemoteWriteStream(_client, _remotePath, initial);
+        if (mode != FileMode.Append)
+        {
+            stream.Position = 0;
+        }
+
+        return stream;
     }
 
     public byte[] ReadAllBytes() => Fetch();
@@ -148,5 +200,49 @@ internal sealed class RemoteFile : VirtualNode, IVirtualFile
         return encoding.GetString(Fetch());
     }
 
-    public void Write(ReadOnlySpan<byte> data) => throw new InvalidOperationException("File is read-only.");
+    public void Write(ReadOnlySpan<byte> data)
+    {
+        var res = _client.WriteAsync(_remotePath, data.ToArray(), overwrite: true).GetAwaiter().GetResult();
+        if (!res.Success)
+        {
+            throw new IOException(res.Error ?? $"Failed to write '{Path}' on the remote peer.");
+        }
+    }
+
+    /// <summary>
+    /// A <see cref="MemoryStream"/> that flushes its full contents to the remote
+    /// peer as a single <see cref="AfcpClient.WriteAsync"/> call on
+    /// <see cref="Dispose(bool)"/> — the mount-side half of AFCP's whole-file
+    /// <c>Write</c> verb. Not safe to reuse after disposal (matches
+    /// <see cref="MemoryStream"/>'s own contract).
+    /// </summary>
+    private sealed class RemoteWriteStream : MemoryStream
+    {
+        private readonly AfcpClient _client;
+        private readonly string _remotePath;
+
+        public RemoteWriteStream(AfcpClient client, string remotePath, byte[] initialContent)
+        {
+            _client = client;
+            _remotePath = remotePath;
+            if (initialContent.Length > 0)
+            {
+                Write(initialContent, 0, initialContent.Length);
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                var res = _client.WriteAsync(_remotePath, ToArray(), overwrite: true).GetAwaiter().GetResult();
+                if (!res.Success)
+                {
+                    throw new IOException(res.Error ?? $"Failed to write '{_remotePath}' on the remote peer.");
+                }
+            }
+
+            base.Dispose(disposing);
+        }
+    }
 }

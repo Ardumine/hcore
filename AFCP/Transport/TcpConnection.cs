@@ -16,6 +16,10 @@ public sealed class TcpConnection : IConnection
     public TcpConnection(TcpClient client)
     {
         _client = client;
+        // FramedTransport.WriteMessage does a length-prefix write then a
+        // payload write; without NoDelay, Nagle holds the first small
+        // segment for the peer's delayed ACK — ~40ms per frame.
+        client.NoDelay = true;
         _stream = client.GetStream();
     }
 

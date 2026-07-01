@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+using System.Diagnostics;
 using HCore.Modules.Base;
 using HCore.Packages.HShell.Shell.Commands;
 
@@ -127,7 +129,10 @@ public class ShellImplement : BaseImplement, IShell
 
         try
         {
+            var sw = Stopwatch.StartNew();
             command!.Execute(args, ctx);
+            sw.Stop();
+            ctx.Out.WriteLine($"Command took {sw.ElapsedMilliseconds} ms");
             return true;
         }
         catch (Exception ex)

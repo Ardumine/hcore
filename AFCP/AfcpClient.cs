@@ -70,6 +70,27 @@ public sealed class AfcpClient : IDisposable
         return RoundTripAsync<ReadRequest, ReadResponse>(MessageType.Read, req, ct);
     }
 
+    public Task<WriteResponse> WriteAsync(string path, byte[] data, bool overwrite = true, CancellationToken ct = default)
+    {
+        EnsureConnected();
+        var req = new WriteRequest { Path = path, Data = data, Overwrite = overwrite };
+        return RoundTripAsync<WriteRequest, WriteResponse>(MessageType.Write, req, ct);
+    }
+
+    public Task<MkDirResponse> MkDirAsync(string path, CancellationToken ct = default)
+    {
+        EnsureConnected();
+        var req = new MkDirRequest { Path = path };
+        return RoundTripAsync<MkDirRequest, MkDirResponse>(MessageType.MkDir, req, ct);
+    }
+
+    public Task<RemoveResponse> RemoveAsync(string path, CancellationToken ct = default)
+    {
+        EnsureConnected();
+        var req = new RemoveRequest { Path = path };
+        return RoundTripAsync<RemoveRequest, RemoveResponse>(MessageType.Remove, req, ct);
+    }
+
     /// <summary>
     /// Subscribe to push events for <paramref name="path"/>. Returns a handle whose
     /// <see cref="IAfcpSubscription.State"/> is always observable; the callbacks are optional.

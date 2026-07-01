@@ -46,7 +46,7 @@ The shell dispatches through an `ICommand` registry (one class per command). Bui
 | `afcp mount <host> <port> <mountpoint>` | Mount a remote peer's tree at `<mountpoint>` (e.g. `afcp mount 127.0.0.1 8000 /other`) |
 | `afcp unmount <mountpoint>` | Tear down a remote mount |
 | `afcp status` | Show serving port and active mounts |
-| `afcp test` | Run the AFCP loopback self-test (spawn lidar → serve → mount → ls → cat → cleanup) |
+| `afcp test` | Run the AFCP loopback self-test (spawn lidar → serve → mount → ls → cat → mkdir/write/rm → cleanup) |
 | `clear` | Clear the terminal |
 
 Arguments containing spaces can be quoted: `write notes.txt "hello world"`.
@@ -83,7 +83,7 @@ run usb
 | `/dev` | Synthetic device files (read-only) |
 | `/tmp` | In-memory scratch (lost on exit) |
 | `/proc` | Live view of running module instances + their data facets (read-only) |
-| `/<mountpoint>` (e.g. `/other`) | A remote peer's `/proc` tree, mounted via `afcp mount` (read-only) |
+| `/<mountpoint>` (e.g. `/other`) | A remote peer's entire root (not just `/proc`), mounted via `afcp mount` (read-write — `mkdir`/`write`/`rm`/`mv`/etc. all work across the mount) |
 
 After boot, `/proc` shows init's children plus the booted services, e.g.:
 
@@ -120,7 +120,7 @@ usb: Stopped
 
 ## AFCP — remote data plane
 
-The `afcp` command drives the kernel-space AFCP bridge, exposing the local `/proc` tree over TCP and mounting remote peers' trees as read-only VFS mounts (9P-style: remoteness is a path prefix). It reaches the bridge through the shared `IAfcpKernel` interface (a `GetModuleInterface<IAfcpKernel>("@afcp")` lookup), so the shell package has no AFCP reference. Full design and the standalone `AFCP/` protocol library are documented in [AFCP.md](AFCP.md).
+The `afcp` command drives the kernel-space AFCP bridge, exposing the local root (`/proc`, `/etc`, `/dev`, `/packs`, ...) over TCP and mounting remote peers' trees as read-write VFS mounts (9P-style: remoteness is a path prefix). Both sides use ordinary VFS commands — `ls`/`cat`/`mkdir`/`write`/`rm`/`mv`/etc. all work across a mount, no AFCP-specific verbs. It reaches the bridge through the shared `IAfcpKernel` interface (a `GetModuleInterface<IAfcpKernel>("@afcp")` lookup), so the shell package has no AFCP reference. There is no capability model yet — a mounting peer can write anywhere under the served root. Full design and the standalone `AFCP/` protocol library are documented in [AFCP.md](AFCP.md).
 
 ```
 / $ service start sensor        # start the lidar demo (exposes /proc/lidar/scan_data)
@@ -144,8 +144,14 @@ frame:       12
 angle_min:   -3.142
 angle_max:   3.142
 ranges:      [360 samples]
+/ $ mkdir /other/tmp/scratch      # remote write
+/ $ write /other/tmp/scratch/f.txt hello
+/ $ cat /other/tmp/scratch/f.txt
+hello
+/ $ rm /other/tmp/scratch/f.txt
+/ $ rmdir /other/tmp/scratch
 / $ afcp unmount /other
 unmounted /other.
 ```
 
-`afcp test` runs the whole loopback (serve + mount + ls + cat + cleanup) in one instance — the quickest way to verify the remote data plane works.
+`afcp test` runs the whole loopback (serve + mount + ls + cat + mkdir/write/rm + cleanup) in one instance — the quickest way to verify the remote data plane works.

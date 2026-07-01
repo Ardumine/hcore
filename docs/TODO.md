@@ -18,8 +18,21 @@ The source is clean — only **one** real TODO remains:
 Services are built (`FS/etc/services/*.svc`, `ServiceCommand.cs`, init boots them). Shell has
 FileSystem / Help / Process / Service / **AFCP** commands. **The local data plane (§A) is
 implemented and verified.** **AFCP Layer 1 (§C1) — remote mounts + Sync + Read — is implemented
-and verified** via the `afcp test` loopback self-test (see [AFCP.md](AFCP.md)). AFCP Layer 2
-(subscribe-push) and Layer 3 (MKCall), the capability model, and the config system remain.
+and verified** via the `afcp test` loopback self-test (see [AFCP.md](AFCP.md)). **§C7a — remote
+VFS writes (Write/MkDir/Remove) — is implemented and verified**, same self-test plus a manual
+loopback shell check (`mkdir`/`write`/`append`/`cat`/`mv`/`touch`/`rm`/`rmdir` through a mounted
+peer). Move/rename works over a remote mount by composing the existing `Write`+`MkDir`+`Remove`
+primitives — no dedicated wire message (see §C7a below). Fixed a latent bug surfaced by this work:
+the AFCP serializer's unmanaged-array fast path threw `IndexOutOfRangeException` serializing a
+zero-length array (e.g. an empty file's `byte[]`) — `Ldelema` on element 0 of an empty array always
+bounds-checks even though the body write is skipped for zero length; fixed in
+`AFCP/Serializer/Serializers/ArraySerializer.cs`. Also fixed a latency bug found via manual
+testing over `/remote`: no TCP connection ever set `NoDelay`, so every AFCP frame's two writes
+(length prefix, then payload) sat behind Nagle's algorithm waiting on the peer's delayed ACK —
+100-250ms per shell command on loopback, down to single digits after setting
+`TcpClient.NoDelay = true` in `TcpConnection`'s constructor (the one place both the connect and
+accept paths construct a connection). AFCP Layer 2 (subscribe-push) and Layer 3 (MKCall), the
+capability model, and the config system remain.
 
 ---
 
@@ -102,17 +115,20 @@ Design work remains; these are additive layers on top of §A, not blockers for t
       **Layer 1 DONE** (mount + Sync + Read over TCP, verified via the `afcp test`
       loopback self-test). The standalone `AFCP/` library (5-layer stack: Transport
       → Framing → Multiplex → IL-emit Serializer → Protocol) and the kernel-space
-      bridge (`AfcpKernelService` + `DataHostAfcpProvider` + `RemoteFileSystem`,
-      driven by the `afcp` shell command) are implemented. See [AFCP.md](AFCP.md).
-      **Layer 2** (subscribe-push over the wire — provider currently rejects
-      Subscribe) and **Layer 3** (MKCall/`ModuleProxy` remote method calls) remain.
-      The bridge is kernel-space for now; migrating it to an `HCore.Packages.Afcp`
-      package needs `IVirtualFileSystem` moved to Base + a proc-view/mount contract
-      (documented in AFCP.md "Migration path").
+      bridge (`AfcpKernelService` + `VfsAfcpProvider` + lazy `RemoteFileSystem`,
+      driven by the `afcp` shell command) are implemented. The serve side is a
+      generic VFS proxy over the kernel `FileSystem` — it serves the **entire root**
+      (`/proc`, `/etc`, `/dev`, `/packs`, ...), and live `/proc` facets stay fresh
+      because `ProcFileSystem` rebuilds them on every server-side read. See
+      [AFCP.md](AFCP.md). The bridge is kernel-space for now; migrating it to an
+      `HCore.Packages.Afcp` package needs `IVirtualFileSystem` moved to Base + a
+      proc-view/mount contract (documented in AFCP.md "Migration path"). The
+      follow-up gaps are tracked under C7.
 - ✱ **C2. MKCall / `ModuleProxy`** — required for remote method calls (V2's was deleted; remote
       calls need a marshalling proxy back). Not designed. (= AFCP Layer 3.)
-- ✱ **C3. Capability model** — needed before remote mounts are production-safe; also closes the
-      `Kill` gap (`IModuleHost.cs:86`). Not designed.
+- ✱ **C3. Capability model** — needed before remote mounts (especially **writes**) are
+      production-safe; also closes the `Kill` gap (`IModuleHost.cs:86`). Not designed.
+      Today everything is wide-open trusted-LAN (documented gap, same stance as `Kill`).
 - ✱ **C4. Config system** — needed for mount points + per-module config injection (V2's
       `IModuleConfigManager`). Absent entirely.
 - ✱ **C5. Dynamic invocation** (`[Exposed]` + `Host.Call(name, member, args)`) — DESIGN.md
@@ -121,6 +137,43 @@ Design work remains; these are additive layers on top of §A, not blockers for t
 - ✱ **C6. Full process lifecycle** (`start`/`stop`/`exit`/self-reap on `Run()` return) —
       DESIGN.md future-work #2. Orthogonal, but affects how a producer stops cleanly and
       interacts with `ProducerKilled`.
+
+### C7. AFCP follow-ups (Layer 1 shipped — these are the remaining gaps)
+
+- ✅ **C7a. Remote VFS writes.** Added `Write` (create/overwrite a file), `MkDir`,
+      `Remove` message types (`AFCP/Protocol/MessageType.cs`, `Messages.cs`); server side
+      (`VfsAfcpProvider`) delegates to `FileSystem.CreateFile`/`MkDir`/`DeleteFile`; mount
+      side (`RemoteDirectory`/`RemoteFile` in `HCore.Main/Vfs/RemoteFileSystem.cs`) wires
+      `CreateDirectory`/`TryDelete`/`CreateFile`/`Write`/`GetStream` to the new
+      `AfcpClient.MkDirAsync`/`RemoveAsync`/`WriteAsync`; `RemoteFileSystem.IsReadOnly` is
+      now `false`. **No dedicated `Move` message** — `HCore.Main.Vfs.FileSystem.Move`
+      already decomposes every move into `CreateFile`/`CreateDirectory`/`TryDelete`/
+      `ReadAllBytes` against the generic VFS primitives (same-mount only, a pre-existing
+      constraint), so `mv`/`rename` over a remote mount works for free once
+      `Write`/`MkDir`/`Remove` are wired — at the cost of N round-trips per file instead
+      of one, acceptable for a trusted-LAN first cut. `Remove` maps 1:1 onto
+      `IVirtualDirectory.TryDelete` (single node, refuses a non-empty directory, no
+      recursion — matches local `HostDirectory` semantics). No typed errors (`Success`
+      bool + `Error` string, same minimalism as `Read`/`Sync`) — that's C7d. No capability
+      model for this cut (trusted-LAN gap, same stance as `Kill` — tracked by C3); a
+      mounting peer can now write anywhere under the served root, not just read it.
+      Verified via the extended `afcp test` self-test (mkdir/write/cat/rm/rmdir on a
+      loopback mount) plus a manual shell check including `mv` and `touch` (empty file).
+- ✱ **C7b. Layer 2 — subscribe-push over the wire.** `Read` gives snapshots; a remote
+      consumer cannot subscribe to a live stream (e.g. a 1 kHz lidar). The protocol
+      messages already exist (`Subscribe`/`Unsubscribe`/`Event`/`ProducerGone`/
+      `SubscriptionError`) but `VfsAfcpProvider` rejects `Subscribe`. Needs: server-side
+      `DataHost.Subscribe` → push `EventNotify` frames through the `IAfcpSubscriptionSink`;
+      client-side `AfcpClient` dispatch already wired. Biggest data-plane gap.
+- ✱ **C7c. Layer 3 — MKCall proxy** (= C2). `GetModuleInterface<T>(remotePath)` returns a
+      marshalling proxy. Not designed.
+- ☐ **C7d. Typed errors over the wire.** A missing file, a permission error, and a
+      "not a directory" all collapse to `Exists=false` / empty listing. No error response
+      type for `Sync`/`Read` — add one so failures are distinguishable.
+- ☐ **C7e. Large-file streaming.** `Read` returns the whole file in one frame. Fine for
+      `/proc` facets and small config; a chunked/streaming read is needed for big files.
+- ☐ **C7f. Reconnection.** If the TCP link drops, `RemoteFileSystem` throws on next access;
+      no auto-reconnect / mount health tracking.
 
 ---
 
@@ -164,9 +217,15 @@ layer on top.
 ```
 B1–B6 ✅ → A1 (contracts) ✅ → A2 (impl) ✅ → A3 (demo) ✅ → [local data plane SHIPPED]
                                                                      ↓
-                               C5 (dynamic invocation, same axis) — optional parallel
+                               C1 (AFCP Layer 1) ✅ → [remote mount + Sync + Read SHIPPED]
                                                                      ↓
-                               C3 (capability) → C4 (config) → C1 (AFCP mount) → C2 (MKCall proxy)
+                               C7a (remote writes) ✅ → [Write/MkDir/Remove SHIPPED]
+                                                                     ↓
+                               C7b (Layer 2 subscribe-push) → C7c/C2 (MKCall proxy)
+                                                                     ↓
+                               C7d (typed errors) / C7e (streaming) / C7f (reconnect) — on demand
+                                                                     ↓
+                               C3 (capability — gates production writes) / C4 (config) / C5 (dynamic invocation)
                                                                      ↓
                                D1 (pull) / D2 (pool) — on demand
 ```

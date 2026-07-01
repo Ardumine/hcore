@@ -24,6 +24,7 @@ public static class ArraySerializer
         MethodInfo? writeStream = typeof(Stream).GetMethod("Write", [typeof(ReadOnlySpan<byte>)]);
 
         il.DeclareLocal(typeof(int));
+        Label skipBodyLabel = il.DefineLabel();
 
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldlen);
@@ -34,6 +35,11 @@ public static class ArraySerializer
         il.Emit(OpCodes.Ldc_I4_4);
         il.Emit(OpCodes.Newobj, spanCtor!);
         il.Emit(OpCodes.Callvirt, writeStream!);
+
+        // An empty array has no element 0 — Ldelema below would throw
+        // IndexOutOfRangeException, so skip the body write entirely.
+        il.Emit(OpCodes.Ldloc_0);
+        il.Emit(OpCodes.Brfalse_S, skipBodyLabel);
 
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldarg_2);
@@ -47,6 +53,7 @@ public static class ArraySerializer
         il.Emit(OpCodes.Newobj, spanCtor!);
         il.Emit(OpCodes.Callvirt, writeStream!);
 
+        il.MarkLabel(skipBodyLabel);
         il.Emit(OpCodes.Ret);
         return serializeMethod;
     }

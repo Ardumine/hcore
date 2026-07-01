@@ -18,6 +18,9 @@ public interface IAfcpProvider
     ConnectResponse Connect(ConnectRequest request);
     SyncResponse Sync(SyncRequest request);
     ReadResponse Read(ReadRequest request);
+    WriteResponse Write(WriteRequest request);
+    MkDirResponse MkDir(MkDirRequest request);
+    RemoveResponse Remove(RemoveRequest request);
     SubscribeResponse Subscribe(SubscribeRequest request, IAfcpSubscriptionSink sink);
     void Unsubscribe(ulong subscriptionId);
 }

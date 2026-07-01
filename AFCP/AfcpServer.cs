@@ -126,6 +126,24 @@ public sealed class AfcpServer : IDisposable
                         var res = _provider.Read(req);
                         return Serialize(res);
                     }
+                case MessageType.Write:
+                    {
+                        var req = Deserialize<WriteRequest>(payload);
+                        var res = _provider.Write(req);
+                        return Serialize(res);
+                    }
+                case MessageType.MkDir:
+                    {
+                        var req = Deserialize<MkDirRequest>(payload);
+                        var res = _provider.MkDir(req);
+                        return Serialize(res);
+                    }
+                case MessageType.Remove:
+                    {
+                        var req = Deserialize<RemoveRequest>(payload);
+                        var res = _provider.Remove(req);
+                        return Serialize(res);
+                    }
                 case MessageType.Subscribe:
                     {
                         var req = Deserialize<SubscribeRequest>(payload);

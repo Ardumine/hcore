@@ -28,6 +28,15 @@ public static class MessageType
     /// <summary>Cancel a subscription. Request: <see cref="UnsubscribeRequest"/>. Response: empty.</summary>
     public const ushort Unsubscribe = 5;
 
+    /// <summary>Create or overwrite a file. Request: <see cref="WriteRequest"/>. Response: <see cref="WriteResponse"/>.</summary>
+    public const ushort Write = 6;
+
+    /// <summary>Create a directory (and any missing parents). Request: <see cref="MkDirRequest"/>. Response: <see cref="MkDirResponse"/>.</summary>
+    public const ushort MkDir = 7;
+
+    /// <summary>Delete a single file or empty directory. Request: <see cref="RemoveRequest"/>. Response: <see cref="RemoveResponse"/>.</summary>
+    public const ushort Remove = 8;
+
     /// <summary>Notify-only: a pushed data frame for an active subscription.</summary>
     public const ushort Event = 100;
 

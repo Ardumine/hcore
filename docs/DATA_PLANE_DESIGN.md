@@ -1,9 +1,11 @@
 # HCore — Data Plane & Exposed-Data Design
 
-> **Status:** design (not yet built). This document records the full design debate
-> and the decisions reached, spanning: the V2→V3 feature gap that motivates it,
-> the "data as a facet" model, the event/dispatch semantics, cross-CPU timing,
-> and the AFCP remote-mount story.
+> **Status:** historical design debate — most of what's described here has since
+> shipped (see [TODO.md](TODO.md) for current status, [DATA_PLANE.md](DATA_PLANE.md)
+> for the living how-it-works guide). This document records the debate and the
+> decisions reached, spanning: the V2→V3 feature gap that motivates it, the "data
+> as a facet" model, the event/dispatch semantics, cross-CPU timing, and the AFCP
+> remote-mount story.
 > **Related:** [V2_V3_COMPARISON.md](V2_V3_COMPARISON.md) (exhaustive feature table),
 > [DESIGN.md](DESIGN.md), [MODULE_HIERARCHY.md](MODULE_HIERARCHY.md).
 

@@ -51,6 +51,47 @@ public sealed class ReadResponse
     public bool Exists { get; set; }
 }
 
+// --- Write (create/overwrite a file) ---
+
+public sealed class WriteRequest
+{
+    public string Path { get; set; } = string.Empty;
+    public byte[]? Data { get; set; }
+    public bool Overwrite { get; set; } = true;
+}
+
+public sealed class WriteResponse
+{
+    public bool Success { get; set; }
+    public string? Error { get; set; }
+}
+
+// --- MkDir (create a directory, and any missing parents) ---
+
+public sealed class MkDirRequest
+{
+    public string Path { get; set; } = string.Empty;
+}
+
+public sealed class MkDirResponse
+{
+    public bool Success { get; set; }
+    public string? Error { get; set; }
+}
+
+// --- Remove (delete a single file or empty directory) ---
+
+public sealed class RemoveRequest
+{
+    public string Path { get; set; } = string.Empty;
+}
+
+public sealed class RemoveResponse
+{
+    public bool Success { get; set; }
+    public string? Error { get; set; }
+}
+
 // --- Subscribe (push) ---
 
 public sealed class SubscribeRequest
