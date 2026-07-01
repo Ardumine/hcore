@@ -31,8 +31,11 @@ testing over `/remote`: no TCP connection ever set `NoDelay`, so every AFCP fram
 (length prefix, then payload) sat behind Nagle's algorithm waiting on the peer's delayed ACK —
 100-250ms per shell command on loopback, down to single digits after setting
 `TcpClient.NoDelay = true` in `TcpConnection`'s constructor (the one place both the connect and
-accept paths construct a connection). AFCP Layer 2 (subscribe-push) and Layer 3 (MKCall), the
-capability model, and the config system remain.
+accept paths construct a connection). **AFCP Layer 2 (subscribe-push, §C7b) — transparent
+remote `Data.Subscribe<T>` over a mount — is implemented and verified** via the extended
+`afcp test` (raw-client push + the `RemoteSlam` demo consumer over a loopback mount +
+`ProducerKilled` on kill). AFCP Layer 3 (MKCall), the capability model, and the config system
+remain.
 
 ---
 
@@ -159,12 +162,28 @@ Design work remains; these are additive layers on top of §A, not blockers for t
       mounting peer can now write anywhere under the served root, not just read it.
       Verified via the extended `afcp test` self-test (mkdir/write/cat/rm/rmdir on a
       loopback mount) plus a manual shell check including `mv` and `touch` (empty file).
-- ✱ **C7b. Layer 2 — subscribe-push over the wire.** `Read` gives snapshots; a remote
-      consumer cannot subscribe to a live stream (e.g. a 1 kHz lidar). The protocol
-      messages already exist (`Subscribe`/`Unsubscribe`/`Event`/`ProducerGone`/
-      `SubscriptionError`) but `VfsAfcpProvider` rejects `Subscribe`. Needs: server-side
-      `DataHost.Subscribe` → push `EventNotify` frames through the `IAfcpSubscriptionSink`;
-      client-side `AfcpClient` dispatch already wired. Biggest data-plane gap.
+- ✅ **C7b. Layer 2 — subscribe-push over the wire.** DONE (Option A, transparent).
+      A remote consumer subscribes with the ordinary `Data.Subscribe<T>("/mnt/proc/…/facet")`
+      and neither knows nor cares the facet is remote (9P-style: remoteness is a path
+      prefix). Server side: `VfsAfcpProvider.Subscribe` resolves the facet via
+      `DataHost.FindFacet`, opens a non-generic `IFacet.SubscribeRaw` subscription, and
+      streams serialized `EventNotify` frames through the `IAfcpSubscriptionSink`;
+      `ProducerKilled` → `sink.ProducerGone`. Client side: `DataHost` consults
+      `FileSystem.TryResolveMount`, and for a remote mount delegates to
+      `RemoteFileSystem.SubscribeData<T>` (via the internal `IRemoteDataSource`), which
+      wraps the `AfcpClient` subscription in a `RemoteSubscription<T>` adapter (bounded
+      channel + single consumer loop, so the handler is never invoked concurrently —
+      matching the local single-consumer contract). Fixed a subscription leak: a peer
+      dropping the TCP link without `Unsubscribe` now tears down its server-side
+      subscriptions (`PeerSession.DisposeAllSubscriptions`). Verified via the extended
+      `afcp test`: a raw client gets live pushed frames (advancing `Sequence`, non-empty
+      `Data`); the new `HCore.Packages.Sensor.RemoteSlam` demo consumer receives typed
+      `ScanFrame`s over the loopback mount through the transparent path; and killing the
+      lidar trips the consumer with `ProducerKilled`. **Gotcha surfaced:** this is the
+      first time a facet value is ever serialized (the local plane passes by reference,
+      `cat` uses the text formatter), so `ScanFrame` needed a parameterless constructor —
+      the AFCP `ClassSerializer` requires one. Any facet value type that crosses a remote
+      subscribe must be AFCP-serializable.
 - ✱ **C7c. Layer 3 — MKCall proxy** (= C2). `GetModuleInterface<T>(remotePath)` returns a
       marshalling proxy. Not designed.
 - ☐ **C7d. Typed errors over the wire.** A missing file, a permission error, and a
@@ -183,9 +202,10 @@ Design work remains; these are additive layers on top of §A, not blockers for t
       push ships. The `ISubscription` handle is already rich enough for the adapter to sit on top.
 - ⏸ **D2. Pool/loaned messages** (ROS2-style pre-allocated frames, ref-counted) — after a profiler
       demands it. Ship allocate-immutable-per-frame first.
-- ⏸ **D3. Remote case — Layer 2/3** — Layer 1 (mount/snapshot) is done (§C1);
-      Layer 2 (subscribe-push) and Layer 3 (MKCall) remain. `(Sequence,
-      InterFrameDelta)` is forward-compatible and will work unchanged when they arrive.
+- ⏸ **D3. Remote case — Layer 3** — Layer 1 (mount/snapshot, §C1) and Layer 2
+      (subscribe-push, §C7b) are done; Layer 3 (MKCall) remains. `(Sequence,
+      InterFrameDelta)` proved forward-compatible: Layer 2 carries them unchanged over
+      the wire (`EventNotify`).
 - ⏸ **D4. Backoff policy specifics** — re-subscribe backoff is the consumer's job; the kernel API
       for it is not designed (and may not need to be — consumer-side concern).
 
@@ -221,7 +241,9 @@ B1–B6 ✅ → A1 (contracts) ✅ → A2 (impl) ✅ → A3 (demo) ✅ → [loca
                                                                      ↓
                                C7a (remote writes) ✅ → [Write/MkDir/Remove SHIPPED]
                                                                      ↓
-                               C7b (Layer 2 subscribe-push) → C7c/C2 (MKCall proxy)
+                               C7b (Layer 2 subscribe-push) ✅ → [transparent remote Subscribe SHIPPED]
+                                                                     ↓
+                                                          C7c/C2 (MKCall proxy)
                                                                      ↓
                                C7d (typed errors) / C7e (streaming) / C7f (reconnect) — on demand
                                                                      ↓

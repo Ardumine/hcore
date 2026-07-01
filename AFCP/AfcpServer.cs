@@ -74,6 +74,10 @@ public sealed class AfcpServer : IDisposable
             mux.Closed += _ =>
             {
                 lock (_sessionsLock) { _sessions.Remove(session); }
+                // Tear down any subscriptions this peer left open — a client that
+                // drops the link without Unsubscribe would otherwise leak the
+                // server-side facet subscription (and its consumer loop) forever.
+                session.DisposeAllSubscriptions();
             };
             lock (_sessionsLock) { _sessions.Add(session); }
             session.Start();
@@ -163,6 +167,26 @@ public sealed class AfcpServer : IDisposable
                     }
                 default:
                     return Array.Empty<byte>();
+            }
+        }
+
+        /// <summary>
+        /// Dispose every subscription this peer opened. Called when the connection
+        /// closes so the provider can release the backing facet subscriptions.
+        /// </summary>
+        public void DisposeAllSubscriptions()
+        {
+            ulong[] ids;
+            lock (_activeSubscriptions)
+            {
+                ids = _activeSubscriptions.Keys.ToArray();
+                _activeSubscriptions.Clear();
+            }
+
+            foreach (var id in ids)
+            {
+                try { _provider.Unsubscribe(id); }
+                catch { /* teardown is best-effort */ }
             }
         }
 

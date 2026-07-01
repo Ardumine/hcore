@@ -24,13 +24,16 @@ namespace HCore.Main.Internal;
 /// entire tree read-write — and <c>/proc</c> facets stay live because <c>ProcFileSystem</c>
 /// rebuilds them on every server-side read. No capability model exists yet (see
 /// TODO.md §C3): any mounting peer can write anywhere under the served root, same
-/// documented trusted-LAN gap as <c>Kill</c>. Subscribe-push (Layer 2) and MKCall
-/// (Layer 3) are deferred — the provider rejects Subscribe for now.
+/// documented trusted-LAN gap as <c>Kill</c>. Subscribe-push (Layer 2) is now
+/// wired: <c>VfsAfcpProvider.Subscribe</c> backs a live facet subscription via
+/// <see cref="DataHost"/> and streams <c>EventNotify</c> frames to the peer.
+/// MKCall (Layer 3) remains deferred.
 /// </summary>
 internal sealed class AfcpKernelService : IAfcpKernel
 {
     private readonly FileSystem _vfs;
     private readonly ModuleHost _moduleHost;
+    private readonly DataHost _dataHost;
     private readonly Serializer _serializer = new();
 
     private AfcpServer? _server;
@@ -38,10 +41,11 @@ internal sealed class AfcpKernelService : IAfcpKernel
     private readonly Dictionary<string, RemoteFileSystem> _mounts = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _lock = new();
 
-    public AfcpKernelService(FileSystem vfs, ModuleHost moduleHost)
+    public AfcpKernelService(FileSystem vfs, ModuleHost moduleHost, DataHost dataHost)
     {
         _vfs = vfs;
         _moduleHost = moduleHost;
+        _dataHost = dataHost;
     }
 
     public string Serve(int port)
@@ -54,7 +58,7 @@ internal sealed class AfcpKernelService : IAfcpKernel
             }
 
             var endpoint = new IPEndPoint(IPAddress.Any, port);
-            var provider = new VfsAfcpProvider(_vfs);
+            var provider = new VfsAfcpProvider(_vfs, _dataHost, _serializer);
             _server = new AfcpServer(endpoint, provider, _serializer);
             _server.Start();
             _servingPort = port;
@@ -98,7 +102,7 @@ internal sealed class AfcpKernelService : IAfcpKernel
             }
 
             client.ConnectAsync(endpoint, "hcore").GetAwaiter().GetResult();
-            var remote = new RemoteFileSystem(client, mountPoint);
+            var remote = new RemoteFileSystem(client, mountPoint, _serializer);
             _vfs.Mount(mountPoint, remote);
             _mounts[mountPoint] = remote;
             return $"mounted {host}:{port} at {mountPoint}.";
@@ -149,6 +153,7 @@ internal sealed class AfcpKernelService : IAfcpKernel
         var sb = new StringBuilder();
         var port = 8765;
         var spawnedLidar = false;
+        var spawnedConsumer = false;
 
         void Log(string s) { sb.AppendLine(s); Console.WriteLine($"[afcp-test] {s}"); }
 
@@ -239,6 +244,82 @@ internal sealed class AfcpKernelService : IAfcpKernel
                 throw new InvalidOperationException("delete of the scratch directory failed.");
             }
 
+            // 9. C7b — subscribe-push over the wire (raw client). Prove the server
+            // pushes live EventNotify frames with advancing sequence and real bytes.
+            Log("--- subscribe /proc/lidar/scan_data (raw client) ---");
+            var seqs = new List<long>();
+            var dataNonEmpty = true;
+            var probe = new AfcpClient(_serializer);
+            try
+            {
+                probe.ConnectAsync(new IPEndPoint(IPAddress.Loopback, port), "selftest-probe").GetAwaiter().GetResult();
+                var sub = probe.SubscribeAsync(
+                    "/proc/lidar/scan_data",
+                    onEvent: evt =>
+                    {
+                        lock (seqs)
+                        {
+                            seqs.Add(evt.Sequence);
+                            if (evt.Data is null || evt.Data.Length == 0) dataNonEmpty = false;
+                        }
+                    }).GetAwaiter().GetResult();
+
+                Thread.Sleep(400); // lidar publishes every 100ms -> expect ~4 frames
+                probe.UnsubscribeAsync(sub).GetAwaiter().GetResult();
+            }
+            finally
+            {
+                probe.Dispose();
+            }
+
+            int frameCount;
+            bool increasing;
+            lock (seqs)
+            {
+                frameCount = seqs.Count;
+                increasing = true;
+                for (var i = 1; i < seqs.Count; i++)
+                {
+                    if (seqs[i] <= seqs[i - 1]) { increasing = false; break; }
+                }
+            }
+
+            Log($"received {frameCount} pushed frames; increasing={increasing}; dataNonEmpty={dataNonEmpty}");
+            if (frameCount < 2) throw new InvalidOperationException($"expected >=2 pushed frames, got {frameCount}.");
+            if (!increasing) throw new InvalidOperationException("pushed frame sequence numbers not strictly increasing.");
+            if (!dataNonEmpty) throw new InvalidOperationException("a pushed frame carried empty Data.");
+
+            // 10. C7b transparent typed path — spawn the demo consumer, point it at the
+            // MOUNTED facet, and confirm it receives typed ScanFrame frames via the
+            // ordinary Data.Subscribe<T> (the consumer never knows the facet is remote).
+            Log("--- transparent subscribe via demo consumer (/selftest/proc/lidar/scan_data) ---");
+            _vfs.CreateFile("/tmp/remote_slam_target", Encoding.UTF8.GetBytes("/selftest/proc/lidar/scan_data"));
+            _moduleHost.Spawn<IRunnable>("HCore.Packages.Sensor.RemoteSlam", "rslam").Run();
+            spawnedConsumer = true;
+            Thread.Sleep(450);
+
+            var status = _vfs.GetFile("/proc/rslam/recv_status").ReadString().TrimEnd();
+            Log($"consumer status: {status}");
+            var received = ParseStatusLong(status, "received=");
+            if (received < 2)
+            {
+                throw new InvalidOperationException($"consumer received {received} frames over the mount, expected >=2.");
+            }
+
+            // 11. ProducerKilled over the wire — kill the lidar, confirm the consumer's
+            // remote subscription trips with ProducerKilled (sink.ProducerGone path).
+            Log("--- kill lidar -> expect consumer ProducerKilled ---");
+            _moduleHost.Kill("lidar");
+            spawnedLidar = false; // reaped here; don't double-kill in finally
+            Thread.Sleep(300);
+
+            var afterKill = _vfs.GetFile("/proc/rslam/recv_status").ReadString().TrimEnd();
+            Log($"consumer status after kill: {afterKill}");
+            if (!afterKill.Contains("state=ProducerKilled"))
+            {
+                throw new InvalidOperationException($"expected consumer state=ProducerKilled, got '{afterKill}'.");
+            }
+
             Log("--- SELFTEST PASSED ---");
         }
         catch (Exception ex)
@@ -249,6 +330,11 @@ internal sealed class AfcpKernelService : IAfcpKernel
         finally
         {
             // Cleanup regardless of success/failure.
+            if (spawnedConsumer)
+            {
+                try { _moduleHost.Kill("rslam"); Log("killed rslam."); } catch { }
+            }
+            try { _vfs.DeleteFile("/tmp/remote_slam_target"); } catch { }
             try { Log(Unmount("/selftest")); } catch { }
             try { Log(StopServe()); } catch { }
             if (spawnedLidar)
@@ -258,6 +344,18 @@ internal sealed class AfcpKernelService : IAfcpKernel
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>Extract the integer following <paramref name="key"/> in a status line
+    /// like <c>received=5 lastSeq=42 state=Active</c>, or -1 if absent.</summary>
+    private static long ParseStatusLong(string status, string key)
+    {
+        var idx = status.IndexOf(key, StringComparison.Ordinal);
+        if (idx < 0) return -1;
+        var start = idx + key.Length;
+        var end = start;
+        while (end < status.Length && (char.IsDigit(status[end]) || (end == start && status[end] == '-'))) end++;
+        return long.TryParse(status.AsSpan(start, end - start), out var value) ? value : -1;
     }
 }
 
@@ -271,14 +369,28 @@ internal sealed class AfcpKernelService : IAfcpKernel
 /// Because <c>/proc</c> is a live <see cref="ProcFileSystem"/> mount inside the
 /// kernel VFS, facet files are rebuilt fresh on every <see cref="Read"/> — the
 /// liveness is handled server-side for free, with no facet-specific protocol.
+/// <see cref="Subscribe"/> is the exception to the pure-VFS proxy: it backs a
+/// live push stream via <see cref="DataHost"/> (facets are not files), streaming
+/// serialized frames to the peer through the <see cref="IAfcpSubscriptionSink"/>.
 /// </summary>
 internal sealed class VfsAfcpProvider : IAfcpProvider
 {
     private readonly FileSystem _vfs;
+    private readonly DataHost _dataHost;
+    private readonly Serializer _serializer;
 
-    public VfsAfcpProvider(FileSystem vfs)
+    // Active server-side subscriptions, keyed by the id handed to the peer. Each
+    // wraps a local DataHost subscription that pushes EventNotify frames through
+    // the peer's sink. Disposed on Unsubscribe or when the connection closes.
+    private readonly Dictionary<ulong, ISubscription> _subscriptions = new();
+    private readonly object _subLock = new();
+    private ulong _nextSubscriptionId;
+
+    public VfsAfcpProvider(FileSystem vfs, DataHost dataHost, Serializer serializer)
     {
         _vfs = vfs;
+        _dataHost = dataHost;
+        _serializer = serializer;
     }
 
     public ConnectResponse Connect(ConnectRequest request)
@@ -373,16 +485,84 @@ internal sealed class VfsAfcpProvider : IAfcpProvider
 
     public SubscribeResponse Subscribe(SubscribeRequest request, IAfcpSubscriptionSink sink)
     {
-        // Layer 2 (live push) is deferred — reject for now.
+        var facet = _dataHost.FindFacet(request.Path);
+        if (facet is null)
+        {
+            return new SubscribeResponse
+            {
+                Accepted = false,
+                Error = $"No data facet at '{request.Path}'."
+            };
+        }
+
+        var valueType = facet.ValueType;
+        var typeName = valueType.AssemblyQualifiedName;
+
+        // Reserve the id before subscribing so a frame that arrives synchronously
+        // during SubscribeRaw already sees a stable SubscriptionId.
+        ulong id;
+        lock (_subLock)
+        {
+            id = ++_nextSubscriptionId;
+        }
+
+        ISubscription sub;
+        try
+        {
+            sub = facet.SubscribeRaw(
+                (value, sequence, delta, ct) =>
+                {
+                    byte[] data;
+                    using (var ms = new MemoryStream())
+                    {
+                        _serializer.Serialize(ms, value, valueType);
+                        data = ms.ToArray();
+                    }
+
+                    sink.Push(new EventNotify
+                    {
+                        SubscriptionId = id,
+                        Sequence = sequence,
+                        InterFrameDelta = delta ?? 0,
+                        HasInterFrameDelta = delta.HasValue,
+                        Data = data,
+                        ValueTypeFullName = typeName
+                    });
+                    return ValueTask.CompletedTask;
+                },
+                reason =>
+                {
+                    if (reason == DisconnectReason.ProducerKilled)
+                    {
+                        sink.ProducerGone(id);
+                    }
+                    else if (reason != DisconnectReason.Disposed)
+                    {
+                        sink.Error(id, reason.ToString());
+                    }
+
+                    lock (_subLock) { _subscriptions.Remove(id); }
+                });
+        }
+        catch (Exception ex)
+        {
+            return new SubscribeResponse { Accepted = false, Error = ex.Message };
+        }
+
+        lock (_subLock) { _subscriptions[id] = sub; }
+
         return new SubscribeResponse
         {
-            Accepted = false,
-            Error = "Subscribe is not supported in this build (Layer 1 only)."
+            Accepted = true,
+            SubscriptionId = id,
+            ValueTypeFullName = typeName
         };
     }
 
     public void Unsubscribe(ulong subscriptionId)
     {
-        // No-op: Subscribe is always rejected.
+        ISubscription? sub;
+        lock (_subLock) { _subscriptions.Remove(subscriptionId, out sub); }
+        sub?.Dispose();
     }
 }

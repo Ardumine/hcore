@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using HCore.Main.Vfs;
 using HCore.Modules.Base;
 
 namespace HCore.Main.Internal;
@@ -17,6 +18,16 @@ public sealed class DataHost
 {
     private readonly Dictionary<(string Instance, string Facet), IFacet> _facets = new();
     private readonly object _lock = new();
+
+    // The kernel VFS, consulted in Subscribe<T> to detect a remote-mounted facet
+    // path and transparently redirect the subscribe to the peer (9P-style: remoteness
+    // is a path prefix). One-way dependency; the VFS knows nothing about DataHost.
+    private readonly FileSystem _vfs;
+
+    public DataHost(FileSystem vfs)
+    {
+        _vfs = vfs;
+    }
 
     public IExposedData<T> ExposeData<T>(
         string owner,
@@ -73,6 +84,15 @@ public sealed class DataHost
         Func<DataEvent<T>, CancellationToken, ValueTask> handler,
         Action<DisconnectReason>? onDisconnected) where T : class
     {
+        // Remoteness is a path prefix: if the path resolves to a remote AFCP mount,
+        // redirect the subscribe to the peer transparently. Local /proc paths resolve
+        // to ProcFileSystem (not an IRemoteDataSource) and fall through below.
+        if (_vfs.TryResolveMount(facetPath, out var fs, out var remotePath)
+            && fs is IRemoteDataSource remote)
+        {
+            return remote.SubscribeData<T>(remotePath, handler, onDisconnected);
+        }
+
         var (instance, facetName) = ParseFacetPath(facetPath);
         IFacet? raw;
         lock (_lock)
@@ -234,6 +254,17 @@ internal interface IFacet
 
     /// <summary>Formatted current value for <c>cat</c>, or <c>null</c> if nothing published yet.</summary>
     string? FormatForCat();
+
+    /// <summary>
+    /// Non-generic subscribe hook for callers that don't know the value type at
+    /// compile time (the AFCP serve side). The handler receives the boxed value,
+    /// plus the same <c>Sequence</c> and <c>InterFrameDelta</c> the typed
+    /// <see cref="DataEvent{T}"/> carries. Bridges to the typed
+    /// <c>Subscribe</c> — full breaker/threading/ProducerKilled semantics intact.
+    /// </summary>
+    ISubscription SubscribeRaw(
+        Func<object, long, long?, CancellationToken, ValueTask> handler,
+        Action<DisconnectReason>? onDisconnected);
 
     /// <summary>Fire <see cref="DisconnectReason.ProducerKilled"/> to every subscriber.</summary>
     void NotifyProducerKilled();

@@ -29,7 +29,7 @@ internal static class Program
         // The module host knows every loaded module and brokers references
         // between them. It is what a module talks to when it wants to call
         // another module.
-        var dataHost = new DataHost();
+        var dataHost = new DataHost(_vfs);
         var host = new ModuleHost(_vfs, _vfsModuleProxyLock, dataHost, _loadedModuleDescriptors);
 
         // Expose the running modules as a live /proc tree (like Linux/Plan 9).
@@ -37,7 +37,7 @@ internal static class Program
 
         // Register the kernel-space AFCP bridge as a named kernel service so the
         // shell can reach it via GetModuleInterface<IAfcpKernel>("@afcp").
-        host.RegisterKernelService("@afcp", new AfcpKernelService(_vfs, host));
+        host.RegisterKernelService("@afcp", new AfcpKernelService(_vfs, host, dataHost));
 
         // The init module (PID 1) — the kernel spawns it explicitly, then runs it.
         var initModule = host.Spawn<IRunnable>("HCore.Packages.HInit.Init", "init");

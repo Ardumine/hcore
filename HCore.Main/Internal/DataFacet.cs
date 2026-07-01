@@ -135,6 +135,11 @@ internal sealed class Facet<T> : IFacet, IExposedData<T> where T : class
         return sub;
     }
 
+    public ISubscription SubscribeRaw(
+        Func<object, long, long?, CancellationToken, ValueTask> handler,
+        Action<DisconnectReason>? onDisconnected)
+        => Subscribe((evt, ct) => handler(evt.Data, evt.Sequence, evt.InterFrameDelta, ct), onDisconnected);
+
     public void RemoveSubscriber(DataSubscription<T> sub)
     {
         lock (_subLock)

@@ -1,8 +1,31 @@
 using AFCP;
 using AFCP.Protocol;
+using HCore.Modules.Base;
 using System.Text;
+using System.Threading.Channels;
 
 namespace HCore.Main.Vfs;
+
+/// <summary>
+/// Implemented by a mount that can back a remote data-plane subscription. Lets
+/// <see cref="Internal.DataHost"/> redirect an <c>IDataHost.Subscribe&lt;T&gt;</c>
+/// on a mounted path to the remote peer without <c>DataHost</c> depending on any
+/// AFCP type — it only sees this interface plus <see cref="IVirtualFileSystem"/>.
+/// </summary>
+internal interface IRemoteDataSource
+{
+    /// <summary>
+    /// Subscribe to a facet on the remote peer. <paramref name="remotePath"/> is
+    /// the path as the peer sees it (mount prefix already stripped, e.g.
+    /// <c>/proc/lidar/scan_data</c>). Semantics mirror the local
+    /// <c>IDataHost.Subscribe&lt;T&gt;</c>: single-consumer, ordered handler
+    /// invocation, observable <see cref="ISubscription.State"/>.
+    /// </summary>
+    ISubscription SubscribeData<T>(
+        string remotePath,
+        Func<DataEvent<T>, CancellationToken, ValueTask> handler,
+        Action<DisconnectReason>? onDisconnected) where T : class;
+}
 
 /// <summary>
 /// A read-write <see cref="IVirtualFileSystem"/> backed by a remote AFCP peer.
@@ -22,21 +45,29 @@ namespace HCore.Main.Vfs;
 /// whole-file, single round-trip operations — no chunked/streaming write (see
 /// TODO.md §C7e).
 /// </summary>
-internal sealed class RemoteFileSystem : IVirtualFileSystem, IDisposable
+internal sealed class RemoteFileSystem : IVirtualFileSystem, IDisposable, IRemoteDataSource
 {
     private readonly AfcpClient _client;
+    private readonly Serializer _serializer;
 
     public string Name => "afcp-remote";
     public bool IsReadOnly => false;
     public string RemoteEndpoint { get; }
 
-    public RemoteFileSystem(AfcpClient client, string mountPoint)
+    public RemoteFileSystem(AfcpClient client, string mountPoint, Serializer serializer)
     {
         _client = client;
+        _serializer = serializer;
         RemoteEndpoint = mountPoint;
     }
 
     public IVirtualDirectory Root => new RemoteDirectory("/", null, _client, "/");
+
+    public ISubscription SubscribeData<T>(
+        string remotePath,
+        Func<DataEvent<T>, CancellationToken, ValueTask> handler,
+        Action<DisconnectReason>? onDisconnected) where T : class
+        => RemoteSubscription<T>.Start(_client, _serializer, remotePath, handler, onDisconnected);
 
     public void Dispose() => _client.Dispose();
 }
@@ -245,4 +276,168 @@ internal sealed class RemoteFile : VirtualNode, IVirtualFile
             base.Dispose(disposing);
         }
     }
+}
+
+/// <summary>
+/// Mount-side <see cref="ISubscription"/> that wraps a remote AFCP subscription and
+/// makes it look like a local one. AFCP notify frames are dispatched on thread-pool
+/// threads (see <c>MultiplexedConnection</c>), so this adapter funnels them through a
+/// bounded <see cref="Channel{T}"/> + a single consumer loop — the user handler is
+/// therefore invoked by exactly one thread at a time, matching the local
+/// single-consumer contract. Wire-order vs enqueue-order under concurrent dispatch
+/// stays observable through <see cref="DataEvent{T}.Sequence"/>, the same as local
+/// overflow gaps.
+/// </summary>
+internal sealed class RemoteSubscription<T> : ISubscription where T : class
+{
+    // Stream default (DATA_PLANE_DECISIONS.md B3): bounded 64, drop-oldest.
+    private const int ChannelBound = 64;
+
+    private readonly AfcpClient _client;
+    private readonly Serializer _serializer;
+    private readonly Func<DataEvent<T>, CancellationToken, ValueTask> _handler;
+    private readonly Action<DisconnectReason>? _onDisconnected;
+    private readonly Channel<DataEvent<T>> _channel;
+    private readonly CancellationTokenSource _cts = new();
+
+    private IAfcpSubscription? _remote;
+    private int _state = (int)SubscriptionState.Active;
+    private DisconnectReason? _disconnectReason;
+    private long _consumerSkippedCount;
+
+    public SubscriptionState State => (SubscriptionState)Volatile.Read(ref _state);
+    public DisconnectReason? DisconnectReason => _disconnectReason;
+    public long ConsumerSkippedCount => Interlocked.Read(ref _consumerSkippedCount);
+
+    private RemoteSubscription(
+        AfcpClient client,
+        Serializer serializer,
+        Func<DataEvent<T>, CancellationToken, ValueTask> handler,
+        Action<DisconnectReason>? onDisconnected)
+    {
+        _client = client;
+        _serializer = serializer;
+        _handler = handler;
+        _onDisconnected = onDisconnected;
+        _channel = Channel.CreateBounded<DataEvent<T>>(new BoundedChannelOptions(ChannelBound)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true,
+            SingleWriter = false,
+        });
+    }
+
+    public static RemoteSubscription<T> Start(
+        AfcpClient client,
+        Serializer serializer,
+        string remotePath,
+        Func<DataEvent<T>, CancellationToken, ValueTask> handler,
+        Action<DisconnectReason>? onDisconnected)
+    {
+        var sub = new RemoteSubscription<T>(client, serializer, handler, onDisconnected);
+        _ = Task.Run(sub.ConsumeAsync);
+
+        // SubscribeAsync throws (AfcpException) if the peer rejects the facet;
+        // let that propagate to the caller, matching the local "No data facet" throw.
+        sub._remote = client.SubscribeAsync(
+            remotePath,
+            onEvent: sub.OnRemoteEvent,
+            onProducerGone: () => sub.Trip(HCore.Modules.Base.DisconnectReason.ProducerKilled),
+            onError: reason => sub.Trip(MapError(reason)))
+            .GetAwaiter().GetResult();
+
+        return sub;
+    }
+
+    private void OnRemoteEvent(EventNotify evt)
+    {
+        if (State != SubscriptionState.Active) return;
+
+        T value;
+        using (var ms = new MemoryStream(evt.Data ?? Array.Empty<byte>()))
+        {
+            value = _serializer.Deserialize<T>(ms);
+        }
+
+        var frame = new DataEvent<T>
+        {
+            Data = value,
+            Sequence = evt.Sequence,
+            InterFrameDelta = evt.HasInterFrameDelta ? evt.InterFrameDelta : null,
+        };
+
+        // Bounded, drop-oldest: a slow local handler drops the oldest queued frame
+        // rather than blocking the notify thread — Sequence gaps stay observable.
+        _channel.Writer.TryWrite(frame);
+    }
+
+    private async Task ConsumeAsync()
+    {
+        try
+        {
+            await foreach (var frame in _channel.Reader.ReadAllAsync(_cts.Token).ConfigureAwait(false))
+            {
+                try
+                {
+                    await _handler(frame, _cts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch
+                {
+                    Interlocked.Increment(ref _consumerSkippedCount);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Disposed / tripped — normal shutdown.
+        }
+    }
+
+    private void Trip(DisconnectReason reason)
+    {
+        if (Interlocked.CompareExchange(ref _state, (int)SubscriptionState.Tripped, (int)SubscriptionState.Active)
+            != (int)SubscriptionState.Active)
+        {
+            return;
+        }
+
+        _disconnectReason = reason;
+        _cts.Cancel();
+        _channel.Writer.TryComplete();
+
+        try { _onDisconnected?.Invoke(reason); }
+        catch { /* consumer callback must not tear us down */ }
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.CompareExchange(ref _state, (int)SubscriptionState.Disposed, (int)SubscriptionState.Active)
+            != (int)SubscriptionState.Active)
+        {
+            // Already tripped or disposed; still ensure the loop and remote are torn down.
+            _cts.Cancel();
+            _channel.Writer.TryComplete();
+            return;
+        }
+
+        _disconnectReason = HCore.Modules.Base.DisconnectReason.Disposed;
+        _cts.Cancel();
+        _channel.Writer.TryComplete();
+
+        var remote = _remote;
+        if (remote is not null && _client.IsConnected)
+        {
+            try { _client.UnsubscribeAsync(remote).GetAwaiter().GetResult(); }
+            catch { /* best-effort unsubscribe */ }
+        }
+    }
+
+    private static DisconnectReason MapError(string reason)
+        => reason.Contains("overload", StringComparison.OrdinalIgnoreCase)
+            ? HCore.Modules.Base.DisconnectReason.Overload
+            : HCore.Modules.Base.DisconnectReason.HandlerException;
 }

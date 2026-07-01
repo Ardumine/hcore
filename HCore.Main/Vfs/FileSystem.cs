@@ -408,6 +408,31 @@ public sealed class FileSystem
         return path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Resolve <paramref name="path"/> to the <see cref="IVirtualFileSystem"/> that
+    /// backs it plus the path AS THAT FILESYSTEM SEES IT (the mount prefix stripped,
+    /// e.g. <c>/other/proc/lidar</c> under mount <c>/other</c> → <c>/proc/lidar</c>).
+    /// Returns <c>false</c> instead of throwing when no mount covers the path. Used
+    /// by <see cref="Internal.DataHost"/> to detect a remote-mounted facet path and
+    /// redirect the subscribe to the peer. Absolute paths only (working dir <c>/</c>).
+    /// </summary>
+    internal bool TryResolveMount(string path, out IVirtualFileSystem fileSystem, out string remotePath)
+    {
+        try
+        {
+            var (mount, _, relativeSegments) = Resolve(path, "/");
+            fileSystem = mount.FileSystem;
+            remotePath = relativeSegments.Length == 0 ? "/" : "/" + string.Join('/', relativeSegments);
+            return true;
+        }
+        catch (Exception ex) when (ex is DirectoryNotFoundException or InvalidOperationException)
+        {
+            fileSystem = null!;
+            remotePath = string.Empty;
+            return false;
+        }
+    }
+
     private (MountEntry mount, string absolutePath, string[] relativeSegments) Resolve(string path, string workingDirectory)
     {
         if (_mounts.Count == 0)
