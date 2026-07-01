@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Globalization;
 
 namespace Logyt;
 
@@ -17,11 +18,15 @@ public abstract class Logyt
     /// <param name="message">The message</param>
     public abstract void W(string message);
 
-    private readonly Stopwatch _stopwatch =  Stopwatch.StartNew();
+    private static readonly Stopwatch _stopwatch = Stopwatch.StartNew();
 
     public string GenerateTimeStampString()
     {
-        string str = $"{(double)_stopwatch.ElapsedTicks  / Stopwatch.Frequency:0.0000}";
-        return str;
+        return FormatTimestamp((double)_stopwatch.ElapsedTicks / Stopwatch.Frequency);
+    }
+
+    internal static string FormatTimestamp(double seconds)
+    {
+        return seconds.ToString("0.0000", CultureInfo.InvariantCulture);
     }
 }

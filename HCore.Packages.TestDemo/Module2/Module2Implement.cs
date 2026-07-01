@@ -7,7 +7,7 @@ public class Module2Implement : BaseImplement, IModule2
 {
     public void Run()
     {
-        Console.WriteLine($"Run Module 2!");
+        Logger.I("Ran Module 2!");
 
         // Look up the ALREADY-RUNNING Module1 by its /proc path and call it.
         //   - this is a pure lookup: Module2 holds only the IModule1 interface,

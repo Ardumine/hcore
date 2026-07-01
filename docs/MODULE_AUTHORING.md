@@ -273,7 +273,7 @@ var same = Host.GetModuleInterface<IRunnable>("/proc/worker-a");
 
 ## Running and Spawning from the Shell
 
-The HInit shell spawns a module by its descriptor `Name`, then runs an already-spawned instance by its `/proc` path:
+The shell (in its own package, `HCore.Packages.HShell`) spawns a module by its descriptor `Name`, then runs an already-spawned instance by its `/proc` path:
 
 ```
 / $ spawn HCore.Modules.TestDemo.Module1 module1   # create Module1 (not run)

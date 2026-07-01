@@ -13,16 +13,17 @@ internal static class Program
     private static readonly object _vfsModuleProxyLock = new();
     private static readonly List<ModPack> _existingModPacks = [];
     private static readonly List<LoadedModuleDescriptor> _loadedModuleDescriptors = [];
+    private static ConsoleLogyt _kernelLog = null!;
 
 
     public static void Main()
     {
         // Create base logger
-        var logyt = new ConsoleLogyt("HCore");
+        _kernelLog = new ConsoleLogyt("HCore");
 
         _vfs = new FileSystem();
 
-        logyt.I("Starting...");
+        _kernelLog.I("Starting...");
         Init();
 
         // The module host knows every loaded module and brokers references
@@ -37,11 +38,11 @@ internal static class Program
         var initModule = host.Spawn<IRunnable>("HCore.Packages.HInit.Init", "init");
 
         // Run init
-        logyt.I("Running init...");
+        _kernelLog.I("Running init...");
         initModule.Run();
 
         // After the init module finishes, the HCore will stop
-        logyt.I("HCore done!");
+        _kernelLog.I("HCore done!");
     }
 
     static void Init()
@@ -87,13 +88,13 @@ internal static class Program
                     dllName = streamReader.ReadLine();
                     if (string.IsNullOrEmpty(dllName))
                     {
-                        Console.WriteLine($"Error read dll: null");
+                        _kernelLog.W("Error reading mpd: dll name is null");
                         continue;
                     }
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine($"Error read dll: {e.Message} {e}");
+                    _kernelLog.Log(MessageType.Error, $"Error reading mpd dll name: {e.Message}");
                     continue;
                 }
 
@@ -102,12 +103,12 @@ internal static class Program
                     pdbName = streamReader.ReadLine();
                     if (string.IsNullOrEmpty(dllName))
                     {
-                        Console.WriteLine($"Warn read pdb: null");
+                        _kernelLog.W("Warning: pdb name is null");
                     }
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine($"Warn read pdb: {e.Message} {e}");
+                    _kernelLog.W($"Warning reading pdb: {e.Message}");
                     pdbName = null;
                 }
             }

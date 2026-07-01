@@ -43,7 +43,7 @@ public abstract class TextWritterLogyt : Logyt
     public string GenerateLine(MessageType messageType, string message)
     {
         string str =
-            $"{MessageTypeEx.GetAsLetter(messageType)}[{GenerateTimeStampString()} {Description}]{message}";
+            $"{MessageTypeEx.GetAsLetter(messageType)}[{GenerateTimeStampString()} {Description}] {message}";
         return str;
     }
 }

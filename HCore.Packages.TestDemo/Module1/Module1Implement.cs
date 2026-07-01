@@ -6,6 +6,6 @@ public class Module1Implement : BaseImplement, IModule1
 {
     public void Func1()
     {
-        Console.WriteLine($"Func1 was called!");
+        Logger.I("Func1 was called!");
     }
 }

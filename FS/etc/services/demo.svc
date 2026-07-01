@@ -1,0 +1,5 @@
+# demo.svc — start the TestDemo inter-module-call pair.
+# Module2 (m2) calls Module1, so Module1 must be spawned first.
+spawn HCore.Modules.TestDemo.Module1 module1
+spawn HCore.Packages.TestDemo.Module2 demo
+run demo

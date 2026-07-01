@@ -4,7 +4,7 @@
 
 ```bash
 dotnet build hcore.sln        # Builds all projects; post-build copies packages to FS/packs/
-dotnet run --project HCore.Main   # Launches the kernel + init shell
+dotnet run --project HCore.Main   # Launches the kernel + init (boots /etc/services, then the console shell)
 ```
 
 No test framework, no linter, no CI configured.
@@ -19,6 +19,7 @@ No test framework, no linter, no CI configured.
 - **`ModuleHost`** (`HCore.Main/Internal`) is the process table + call broker. Top-level calls: `Spawn<T>(module, instance)` = create a new named instance (does NOT run it; only operation that resolves the concrete impl type by NAME); `GetModuleInterface<T>(instancePath)` = look up an already-running instance by its `/proc` path (or bare name) and never create anything; `Kill(instancePath)` = privileged cascade kill (unrestricted — no capability model yet, documented gap). Instances are keyed by instance name (composite `"owner/leaf"` for children) and are only removed via `Kill`/`KillChild` — there's still no self-reap on `Run()` completion.
 - **Module hierarchy.** A module can own child instances via `ContainerImplement.SpawnChild<TImpl>(leaf, init)` (concrete-type, primary) or `SpawnChildByName<T>(moduleName, leaf, init)` (cross-package escape hatch). The kernel constructs the child, wires it, runs `init` *before* publishing (never half-built), and records a `ParentName` edge on `RunningInstance` so killing the parent structurally reaps every descendant, leaf-first. Every created instance actually receives a `ScopedModuleHost` (bound to its own instance name) as `Host`, not the raw kernel `ModuleHost` — that's what makes a module physically unable to squat another parent's children. `KillChild` is owner-scoped; `Kill` is privileged and works on anything. Full design: `docs/MODULE_HIERARCHY.md`.
 - **`/proc`** (`ProcFileSystem`) is a synthetic, read-only VFS view of running instances, nested by parent→child (splitting the composite instance key on `/`), rebuilt on every access from `ModuleHost`. `/packs` = installed, `/proc` = running.
+- **Init / shell split.** `HCore.Packages.HInit` is PID 1 (`/proc/init`), a `ContainerImplement` implementing `IServiceManager`. On `Run()` it spawns a worker shell child `/proc/init/svc` (only ever used for `IShell.RunScript`), boots every `/etc/services/*.svc` script, then spawns the interactive console shell `/proc/init/console` and blocks on it. The shell itself is a separate package, `HCore.Packages.HShell` (`IShell`), with an `ICommand`+registry dispatch shared by the REPL and `RunScript`. The shell's `service` command reaches init via `GetModuleInterface<IServiceManager>("init")` (the interface lives in `HCore.Modules.Base` so it crosses ALCs). Services are top-level instances named after their `.svc` file; `service stop` = privileged `Kill(name)` cascade.
 
 ## Key gotchas
 

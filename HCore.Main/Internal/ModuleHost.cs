@@ -341,6 +341,7 @@ public sealed class ModuleHost : IModuleHost
         instance.AttachVfs(new ModuleFileSystemProxy(_vfs, _vfsProxyLock, workingDirectory));
         instance.AttachHost(new ScopedModuleHost(this, instanceName));
         instance.AttachInstanceName(instanceName);
+        instance.AttachLogger(new ModuleLogger(instanceName));
 
         return new RunningInstance(instanceName, instance, descriptor, parentName);
     }

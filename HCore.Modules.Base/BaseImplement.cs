@@ -35,6 +35,18 @@ public abstract class BaseImplement : IModule
 	}
 
 	/// <summary>
+	/// Structured logger injected by the kernel, like <see cref="Vfs"/> and
+	/// <see cref="Host"/>. Defaults to a no-op logger (never crashes if
+	/// unwired, but produces no output in that case).
+	/// </summary>
+	public IModuleLogger Logger { get; private set; } = EmptyModuleLogger.Instance;
+
+	public void AttachLogger(IModuleLogger logger)
+	{
+		Logger = logger ?? throw new ArgumentNullException(nameof(logger));
+	}
+
+	/// <summary>
 	/// Called by the kernel when this instance is reaped (killed directly, or as
 	/// part of a parent's cascade). Override to release resources; default is a
 	/// no-op. Runs outside the kernel's process-table lock.
@@ -105,4 +117,15 @@ internal sealed class EmptyModuleHost : IModuleHost
 	public void Kill(string instancePath) => throw NotAttached();
 
 	private static InvalidOperationException NotAttached() => new("Module host is not attached.");
+}
+
+internal sealed class EmptyModuleLogger : IModuleLogger
+{
+	public static EmptyModuleLogger Instance { get; } = new();
+
+	public string Description => "";
+
+	public void I(string message) { }
+	public void W(string message) { }
+	public void E(string message) { }
 }

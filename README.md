@@ -21,7 +21,8 @@ A modular microkernel runtime for C#. HCore makes building modular code and micr
 | `HCore.Main` | Executable | The kernel — boots the system, manages VFS, loads packages |
 | `HCore.Modules.Base` | Class Library | Shared contracts (interfaces, base classes) used by all modules |
 | `Logyt` | Class Library | Structured logging with console color support |
-| `HCore.Packages.HInit` | Class Library (Package) | Init module — provides a shell/REPL for interacting with the VFS |
+| `HCore.Packages.HInit` | Class Library (Package) | Init module (PID 1) — service manager; boots `/etc/services` and launches the shell |
+| `HCore.Packages.HShell` | Class Library (Package) | The interactive shell (`IShell`), with an `ICommand`+registry dispatch |
 | `HCore.Packages.TestDemo` | Class Library (Package) | Demo package with two example modules |
 | `HCore.Packages.Usb` | Class Library (Package) | Demo package for the module hierarchy: a USB controller owning two device children |
 
@@ -35,7 +36,7 @@ A modular microkernel runtime for C#. HCore makes building modular code and micr
 # Build the entire solution
 dotnet build hcore.sln
 
-# Run HCore (starts the kernel and launches the init shell)
+# Run HCore (starts the kernel; init boots /etc/services then drops to the shell)
 dotnet run --project HCore.Main
 ```
 
@@ -115,7 +116,7 @@ MyPackage.pdb
 - [Design & Rationale](docs/DESIGN.md) — Why HCore is shaped this way: the core design questions, answered
 - [Module Hierarchy](docs/MODULE_HIERARCHY.md) — The sub-module design debate, chosen approach, and implementation notes
 - [Module Authoring Guide](docs/MODULE_AUTHORING.md) — How to create your own modules (and call others, and own children)
-- [Shell Guide](docs/SHELL.md) — The HInit shell commands
+- [Shell Guide](docs/SHELL.md) — Shell commands and the `/etc/services` service model
 - [API Reference](docs/API_REFERENCE.md) — Interface and class documentation
 
 ## License

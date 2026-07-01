@@ -1,6 +1,12 @@
-# HCore Shell (HInit)
+# HCore Shell
 
-`HCore.Packages.HInit` is the **init module** — the first module the kernel runs. It provides an interactive shell over the VFS, plus commands to run and spawn other modules. When the shell exits, the kernel stops.
+The shell is its own package, `HCore.Packages.HShell` (`IShell`), and the init module (`HCore.Packages.HInit`, PID 1) drives it. On boot, init:
+
+1. spawns a **worker shell** at `/proc/init/svc` (used only for `RunScript` — it never enters its REPL),
+2. runs every `/etc/services/*.svc` script through that worker (each script spawns+runs a service — see [Services](#services)),
+3. spawns the **interactive console shell** at `/proc/init/console` and blocks on its REPL.
+
+When the console shell exits, init returns and the kernel stops.
 
 ## Starting it
 
@@ -8,14 +14,16 @@
 dotnet run --project HCore.Main
 ```
 
-> Use a **real terminal**. The shell reads keystrokes directly (via the `ReadLine` library) and will throw if its input is piped or redirected.
+> Use a **real terminal**. The console shell reads keystrokes directly (via the `ReadLine` library) and will throw if its input is piped or redirected.
 
 ## Commands
+
+The shell dispatches through an `ICommand` registry (one class per command). Built-ins:
 
 | Command | Description |
 |---------|-------------|
 | `help` | List all commands |
-| `exit` | Exit the shell (the kernel then stops) |
+| `exit` | Exit the shell (init then returns and the kernel stops) |
 | `pwd` | Print the working directory |
 | `cd <path>` | Change working directory (defaults to `/`) |
 | `ls [path]` | List directory entries (defaults to `.`) |
@@ -31,84 +39,74 @@ dotnet run --project HCore.Main
 | `append <file> <text>` | Append text to a file |
 | `spawn <module> <instance>` | **Spawn** a new named instance (does **not** run it) |
 | `run <instance>` | Run an already-spawned instance by its `/proc` path (must be `IRunnable`) |
-| `kill <instance>` | **Kill** an instance and cascade to every child it owns (privileged — works on any instance, not just your own) |
+| `kill <instance>` | **Kill** an instance and cascade to every child it owns (privileged) |
+| `service <start\|stop\|restart\|status\|list> [name]` | Manage `/etc/services` entries (see [Services](#services)) |
 | `clear` | Clear the terminal |
 
 Arguments containing spaces can be quoted: `write notes.txt "hello world"`.
+
+## Services
+
+A **service** is a shell script at `/etc/services/<name>.svc`. By convention the script must spawn and run a module instance named exactly `<name>` (the service's primary instance, like systemd's main PID). Stopping a service kills that instance and, by cascade, every child it owns.
+
+| Sub-command | Effect |
+|-------------|--------|
+| `service start <name>` | Run `/etc/services/<name>.svc` via the worker shell. Reports `Running` only if `/proc/<name>` exists afterward. |
+| `service stop <name>` | `Kill` the primary instance (cascade). Reports `Stopped`. |
+| `service restart <name>` | Stop then start. |
+| `service status <name>` | `Running` / `Stopped` / `Failed` (no script on disk). |
+| `service list` | One line per `*.svc`, with current status. |
+
+At boot init auto-starts every `*.svc` (sorted by filename). The `service` command reaches init through the shared `IServiceManager` interface (a `GetModuleInterface<IServiceManager>("init")` lookup), so the shell package never references the init package.
+
+A script is plain shell text — `#` starts a comment, one command per line. Example (`/etc/services/usb.svc`):
+
+```
+# Start the USB demo controller.
+spawn HCore.Packages.Usb.Usb usb
+run usb
+```
 
 ## The filesystem you'll see
 
 | Path | What |
 |------|------|
 | `/` | Host filesystem (the real `FS/` directory) |
+| `/etc/services` | Service start scripts (`*.svc`) |
 | `/packs` | Installed packages (DLLs + `mpd`) |
 | `/dev` | Synthetic device files (read-only) |
 | `/tmp` | In-memory scratch (lost on exit) |
 | `/proc` | Live view of running module instances (read-only) |
 
-## Example session — inter-module calls and processes
+After boot, `/proc` shows init's children plus the booted services, e.g.:
 
 ```
-/ $ ls /proc
-init/
-
-/ $ spawn HCore.Modules.TestDemo.Module1 module1
-spawned 'module1' from 'HCore.Modules.TestDemo.Module1' (at /proc/module1)
-
-/ $ spawn HCore.Packages.TestDemo.Module2 m2
-spawned 'm2' from 'HCore.Packages.TestDemo.Module2' (at /proc/m2)
-
-/ $ run /proc/m2
-Run Module 2!
-Func1 was called!
-
 / $ ls /proc
 init/
 module1/
-m2/
-
-/ $ cat /proc/m2/info
-instance:   m2
-module:     HCore.Packages.TestDemo.Module2
-friendly:   Demo module 2
-interface:  HCore.Packages.TestDemo.Module2.IModule2
-implements: HCore.Packages.TestDemo.Module2.Module2Implement
-```
-
-`spawn` takes a module's **descriptor `Name`** (e.g. `HCore.Modules.TestDemo.Module1`, `HCore.Packages.TestDemo.Module2`) plus an instance name; it creates the instance but does **not** run it, so it works for any module including services with no entry point (like `Module1`). `run` takes the `/proc` path (or bare name) of an **already-spawned** instance and runs it — it never creates anything. `m2` calls `Module1`, which must already be spawned at `/proc/module1`. See [DESIGN.md](DESIGN.md) for the spawn-vs-lookup distinction and [MODULE_AUTHORING.md](MODULE_AUTHORING.md) to build your own.
-
-## Example session — module hierarchy (kill & cascade)
-
-A module can own real child instances nested under it in `/proc`; killing the parent reaps every descendant automatically:
-
-```
-/ $ spawn HCore.Packages.Usb.Usb usb
-spawned 'usb' from 'HCore.Packages.Usb.Usb' (at /proc/usb)
-
-/ $ run /proc/usb
-
-/ $ ls /proc/usb
+demo/
+usb/
+/ $ ls /proc/init
 info
-device0/
-device1/
+svc/
+console/
+```
 
-/ $ cat /proc/usb/device0/info
-instance:   usb/device0
-module:     HCore.Packages.Usb.UsbDevice
-friendly:   Demo USB device
-interface:  HCore.Modules.Base.IUsbDevice
-implements: HCore.Packages.Usb.UsbDevice.UsbDeviceImplement
-serial:     SN-A
-location:   1-1.2
+## Example session — services and processes
 
+```
+/ $ service list
+demo                 Running
+usb                  Running
+/ $ service stop usb
+usb: Stopped
+/ $ service start usb
+spawned 'usb' from 'HCore.Packages.Usb.Usb' (at /proc/usb)
+usb: Running
 / $ kill /proc/usb
 killed '/proc/usb'
-
-/ $ ls /proc
-init/
-
-/ $ ls /proc/usb
-error: ...not found...
+/ $ service status usb
+usb: Stopped
 ```
 
-`device0`/`device1` were created by `usb` itself via `SpawnChild` (see [MODULE_AUTHORING.md → Owning Child Modules](MODULE_AUTHORING.md#owning-child-modules-sub-modules)) — you never spawn them directly. `kill` is privileged: it works on any instance by path, not just ones you own. See [MODULE_HIERARCHY.md](MODULE_HIERARCHY.md) for the full design.
+`spawn` takes a module's **descriptor `Name`** plus an instance name and creates the instance but does **not** run it. `run` takes the `/proc` path (or bare name) of an **already-spawned** instance and runs it. `kill` is privileged: it works on any instance by path, not just ones you own. See [MODULE_HIERARCHY.md](MODULE_HIERARCHY.md) for the full hierarchy/cascade design and [MODULE_AUTHORING.md](MODULE_AUTHORING.md) to build your own module.
