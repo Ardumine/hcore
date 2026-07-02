@@ -1,0 +1,14 @@
+{
+  "name": "HCore.Packages.Hello",
+  "version": "1.0.0",
+  "baseVersion": "1.0.0",
+  "description": "A sample HCore module — prints a greeting",
+  "commands": [
+    {
+      "name": "hello",
+      "description": "hello [--name <name>]   Print a greeting",
+      "mode": "oneshot",
+      "moduleName": "HCore.Packages.Hello.Mod"
+    }
+  ]
+}
