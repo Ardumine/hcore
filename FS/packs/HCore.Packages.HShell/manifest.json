@@ -1,0 +1,5 @@
+{
+  "name": "HCore.Packages.HShell",
+  "version": "1.0.0",
+  "description": "HCore interactive shell — REPL, script runner, built-in commands"
+}
