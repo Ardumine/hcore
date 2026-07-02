@@ -1,0 +1,39 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v10.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v10.0": {
+      "HCore.Packages.DemoPkg/1.0.0": {
+        "dependencies": {
+          "HCore.Modules.Base": "1.0.0"
+        },
+        "runtime": {
+          "HCore.Packages.DemoPkg.dll": {}
+        }
+      },
+      "HCore.Modules.Base/1.0.0": {
+        "runtime": {
+          "HCore.Modules.Base.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "HCore.Packages.DemoPkg/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "HCore.Modules.Base/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

@@ -56,7 +56,8 @@ public sealed class HpmImplement : BaseImplement, IOneshotCommand
         {
             while (reader.GetNextEntry() is { } entry)
             {
-                if (entry.Name == "manifest.json" && entry.DataStream is not null)
+                var name = NormalizeEntryName(entry.Name);
+                if (name == "manifest.json" && entry.DataStream is not null)
                 {
                     using var ms = new MemoryStream();
                     entry.DataStream.CopyTo(ms);
@@ -86,8 +87,11 @@ public sealed class HpmImplement : BaseImplement, IOneshotCommand
             {
                 if (entry.DataStream is null) continue;
 
-                var destFile = $"{dest}/{entry.Name}";
-                var dir = Path.GetDirectoryName(entry.Name);
+                var name = NormalizeEntryName(entry.Name);
+                if (name.Length == 0) continue; // skip root directory entry
+
+                var destFile = $"{dest}/{name}";
+                var dir = Path.GetDirectoryName(name);
                 if (!string.IsNullOrEmpty(dir) && dir != ".")
                 {
                     var destDir = $"{dest}/{dir}";
@@ -103,6 +107,9 @@ public sealed class HpmImplement : BaseImplement, IOneshotCommand
         Console.WriteLine($"hpm: installed {packName} to {dest}");
         Console.WriteLine("Restart the shell for new commands to appear.");
     }
+
+    private static string NormalizeEntryName(string name) =>
+        name.StartsWith("./") ? name[2..] : name;
 
     private void List()
     {

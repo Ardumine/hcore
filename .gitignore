@@ -137,3 +137,6 @@ _NCrunch*
 
 # Upstream AFCP/KASerializer repos (cloned separately, not part of hcore)
 afcp/
+
+# HCore package files (build artifacts, not source)
+*.hpk
