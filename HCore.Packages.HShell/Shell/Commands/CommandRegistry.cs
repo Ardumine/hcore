@@ -1,4 +1,5 @@
 using System.Text;
+using HCore.Modules.Base;
 
 namespace HCore.Packages.HShell.Shell.Commands;
 

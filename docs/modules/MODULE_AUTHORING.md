@@ -462,6 +462,74 @@ You can use NuGet packages in your modules. Make sure `CopyLocalLockFileAssembli
 
 The `ModPackAssemblyLoadContext` will automatically resolve dependencies from your package's directory in the VFS.
 
+## Contributing Shell Commands
+
+A package can add commands to the shell two ways. See the full design in
+[PACKAGE_SYSTEM.md](../packages/PACKAGE_SYSTEM.md).
+
+### Oneshot commands (manifest-declared)
+
+The package's `manifest.json` declares a command. The shell spawns a fresh child
+module instance for each invocation, runs it, waits for completion, and kills it
+— like a Unix process.
+
+**manifest.json** (alongside `mpd` in your pack directory):
+```json
+{
+  "name": "HCore.Packages.MyTool",
+  "commands": [
+    {
+      "name": "mytool",
+      "description": "My one-shot tool",
+      "mode": "oneshot",
+      "moduleName": "HCore.Packages.MyTool.Mod"
+    }
+  ]
+}
+```
+
+**Module implements `IOneshotCommand`** (from `HCore.Modules.Base`):
+```csharp
+public sealed class MyToolImplement : BaseImplement, IOneshotCommand
+{
+    private string[] _args = [];
+    public void SetArguments(string[] args) => _args = args;
+
+    public void Run()
+    {
+        Console.WriteLine($"Running with {_args.Length} arguments.");
+    }
+}
+```
+
+Shell dispatch: `SpawnChild → SetArguments → Run → KillChild`. The instance
+appears at `/proc/init/console/__cmd_mytool_<guid>` during execution. No manual
+registration needed — the shell reads `manifest.json` at startup.
+
+### Persistent commands (runtime-registered)
+
+A module that is already spawned and running can register its own commands with
+the shell:
+
+```csharp
+public void Run()
+{
+    var shell = Host.GetModuleInterface<IShell>("init/console");
+    shell.RegisterCommand(new MyServiceCommand());
+}
+
+// Command implementation (ICommand is in HCore.Modules.Base):
+private sealed class MyServiceCommand : ICommand
+{
+    public string Name => "mysvc";
+    public string Description => "Control my service";
+    public void Execute(IReadOnlyList<string> args, ShellContext ctx)
+    {
+        ctx.Out.WriteLine("Service is running.");
+    }
+}
+```
+
 ## Checklist
 
 - [ ] Project targets `net10.0`

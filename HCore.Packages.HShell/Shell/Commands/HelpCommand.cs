@@ -1,3 +1,5 @@
+using HCore.Modules.Base;
+
 namespace HCore.Packages.HShell.Shell.Commands;
 
 internal sealed class HelpCommand : ICommand

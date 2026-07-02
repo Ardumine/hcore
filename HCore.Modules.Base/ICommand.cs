@@ -1,7 +1,6 @@
 using System.IO;
-using HCore.Modules.Base;
 
-namespace HCore.Packages.HShell.Shell.Commands;
+namespace HCore.Modules.Base;
 
 /// <summary>
 /// The execution context handed to every command: the module's VFS and Host

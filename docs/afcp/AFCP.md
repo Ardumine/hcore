@@ -155,7 +155,7 @@ server-side rename, accepted for this trusted-LAN first cut.
 The bridge wires AFCP to the kernel's `DataHost` + `ModuleHost` + `FileSystem`.
 It is **kernel-space** for now (HCore.Main references AFCP directly) — a shortcut
 to get Layer 1 testable fast. The architecturally-clean target is an
-`HCore.Packages.Afcp` package, which requires moving `IVirtualFileSystem` to
+`HCore.Packages.Nexus` package, which requires moving `IVirtualFileSystem` to
 `HCore.Modules.Base` and adding a proc-view/mount contract surface (see
 "Migration path" below).
 
@@ -525,7 +525,7 @@ is a path prefix, never a code change.
 
 ## Migration path: kernel-space → package
 
-The bridge is kernel-space now; the clean target is an `HCore.Packages.Afcp`
+The bridge is kernel-space now; the clean target is an `HCore.Packages.Nexus`
 package. That move requires three contract extensions to `HCore.Modules.Base`
 (the module syscall surface) that don't exist yet:
 

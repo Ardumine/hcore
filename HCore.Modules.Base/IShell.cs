@@ -15,4 +15,12 @@ public interface IShell : IRunnable
     /// executed without throwing.
     /// </summary>
     bool RunScript(string path);
+
+    /// <summary>
+    /// Register a command dynamically at runtime. A persistent module calls this
+    /// after it is spawned to add its own commands to the shell's dispatch table.
+    /// The command is stored in the same registry as built-in commands and is
+    /// dispatched by the same REPL loop.
+    /// </summary>
+    void RegisterCommand(ICommand command);
 }

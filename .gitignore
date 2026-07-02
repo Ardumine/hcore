@@ -133,3 +133,6 @@ $RECYCLE.BIN/
 _NCrunch*
 
 .idea/
+
+# Upstream AFCP/KASerializer repos (cloned separately, not part of hcore)
+afcp/

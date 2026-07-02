@@ -167,4 +167,6 @@ public class ShellImplement : BaseImplement, IShell
         _registry.Register(new ExitCommand());
         _registry.Register(new HelpCommand(_registry));
     }
+
+    public void RegisterCommand(ICommand command) => _registry.Register(command);
 }

@@ -1,8 +1,9 @@
 # HCore — Implementation TODO
 
-> **Generated:** 1/07/2026, 17:40
+> **Generated:** 1/07/2026, 17:40 · **Updated:** 2/07/2026 (AFCP organization — Phase 0 done)
 > **Source of truth for the data plane design:** [DATA_PLANE_DESIGN.md](data-plane/DATA_PLANE_DESIGN.md)
 > **§B micro-decisions (settled 1/07/2026):** [DATA_PLANE_DECISIONS.md](data-plane/DATA_PLANE_DECISIONS.md)
+> **AFCP organization plan:** [afcp/AFCP_ORGANIZATION.md](afcp/AFCP_ORGANIZATION.md)
 > **Status conventions:** ☐ not started · ◻ micro-decision needed first · ✱ design pending · ⏸ deferred · ✅ done
 
 ---
@@ -38,6 +39,20 @@ remote `Data.Subscribe<T>` over a mount — is implemented and verified** via th
 through `GetModuleInterface<T>(remotePath)` returning a `DispatchProxy` — is implemented
 and verified** via the extended `afcp test`. The capability model, the config system,
 and typed wire errors remain.
+
+**AFCP organization (2/07/2026):** the upstream protocol stack and serializer have
+been split out of HCore into two standalone, HCore-free repos —
+[`github.com/Ardumine/afcp`](https://github.com/Ardumine/afcp) (the composable
+byte-stream protocol: Transport → Streamy → IMessageStream → RequestChannel, with
+disconnect/reconnect handling, multi-transport selection, and a req/resp timeout)
+and [`github.com/Ardumine/kaserializer`](https://github.com/Ardumine/kaserializer)
+(the reflection-free IL-emit serializer, namespace `KASerializer`). Both clone into
+`hcore/afcp/` and pass their standalone test suites (12 + 30 tests). The HCore
+connector is still the kernel-space bridge for now — extracting it into a loadable
+`HCore.Packages.Nexus` module is Phase 1+2 of [AFCP_ORGANIZATION.md](afcp/AFCP_ORGANIZATION.md).
+§C7f (reconnect/timeout) is now addressed at the protocol layer
+(`ReconnectingConnection` + `RequestChannel` timeout); §C7e (large-file streaming)
+remains deferred.
 
 ---
 
@@ -126,7 +141,7 @@ Design work remains; these are additive layers on top of §A, not blockers for t
       (`/proc`, `/etc`, `/dev`, `/packs`, ...), and live `/proc` facets stay fresh
       because `ProcFileSystem` rebuilds them on every server-side read. See
       [AFCP.md](afcp/AFCP.md). The bridge is kernel-space for now; migrating it to an
-      `HCore.Packages.Afcp` package needs `IVirtualFileSystem` moved to Base + a
+      `HCore.Packages.Nexus` package needs `IVirtualFileSystem` moved to Base + a
       proc-view/mount contract (documented in AFCP.md "Migration path"). The
       follow-up gaps are tracked under C7.
 - ✱ **C2. MKCall / `ModuleProxy`** — required for remote method calls (V2's was deleted; remote
@@ -230,8 +245,16 @@ Design work remains; these are additive layers on top of §A, not blockers for t
       type for `Sync`/`Read` — add one so failures are distinguishable.
 - ☐ **C7e. Large-file streaming.** `Read` returns the whole file in one frame. Fine for
       `/proc` facets and small config; a chunked/streaming read is needed for big files.
-- ☐ **C7f. Reconnection.** If the TCP link drops, `RemoteFileSystem` throws on next access;
+      *Note (2/07/2026):* the upstream `AFCP` lib's `IMessageStream` is message-oriented
+      (whole messages); a chunked variant is deferred there too. The HCore connector can
+      chunk at the verb layer in the interim. See [AFCP_ORGANIZATION.md](afcp/AFCP_ORGANIZATION.md) §0.2.
+- ◐ **C7f. Reconnection.** If the TCP link drops, `RemoteFileSystem` throws on next access;
       no auto-reconnect / mount health tracking.
+      *Partially addressed (2/07/2026):* the upstream `AFCP` lib now ships
+      `ReconnectingConnection` (auto-reconnect w/ exponential backoff + `OnReconnect`)
+      and `RequestChannel` enforces a default 30s call timeout. The HCore connector still
+      needs to wire these (Phase 2) — currently it uses `CancellationToken.None` and no
+      reconnect. The protocol-layer infra exists; the integration is Phase 2 work.
 
 ---
 
@@ -247,6 +270,76 @@ Design work remains; these are additive layers on top of §A, not blockers for t
       unchanged over the wire (`EventNotify`).
 - ⏸ **D4. Backoff policy specifics** — re-subscribe backoff is the consumer's job; the kernel API
       for it is not designed (and may not need to be — consumer-side concern).
+
+---
+
+## E. AFCP organization — protocol vs. HCore connector
+
+> **Plan:** [afcp/AFCP_ORGANIZATION.md](afcp/AFCP_ORGANIZATION.md)
+
+The upstream protocol and serializer are split out of HCore into standalone,
+HCore-free repos. The HCore connector is currently a kernel-space shortcut; the
+target is a loadable `HCore.Packages.Nexus` module (the kernel owns the VFS
+abstraction, the connector is a driver — like a filesystem module in Linux).
+
+- ✅ **E0.A. KASerializer** — `github.com/Ardumine/kaserializer`. Reflection-free
+      IL-emit serializer extracted from `hcore/AFCP/Serializer/`, namespace
+      `AFCP` → `KASerializer` (resolves the CS0118 class-vs-namespace collision).
+      30/30 round-trip tests. Cloned at `hcore/afcp/kaserializer/`.
+- ✅ **E0.B. AFCP protocol lib** — `github.com/Ardumine/afcp`. Remodeled from two
+      experiments (`testApp`/Streamy + `testeMulti`/IConnection) into one unified,
+      composable byte-stream stack: `IConnection` (TCP/serial/in-mem/reconnecting) →
+      `Streamy` decorators (`Camouflage`/`Logger` + abstract `StreamyTransformer`) →
+      `IMessageStream` (`Framing`/`Checksum`/`Crypto` + abstract `MessageTransformer`)
+      → `RequestChannel` (RequestId-demuxed req/resp + 30s timeout). Stream interop
+      (`StreamyFromStream`/`StreamFromStreamy`), `TcpServer`, `TransportRegistry`.
+      12/12 tests. Cloned at `hcore/afcp/afcp/`. Originals preserved under `samples/`.
+- ☐ **E1. Base contract surfaces** — move `IVirtualFileSystem` to
+      `HCore.Modules.Base`; add `IKernelVfs`, `IFacetView`/`IFacet.SubscribeRaw`,
+      `IModuleResolver`, and the `IRemoteMountHook` extension point (the one new
+      design piece — lets `DataHost.Subscribe<T>`/`ModuleHost.GetModuleInterface<T>`
+      defer to a package-provided remote mount without naming its types). No AFCP
+      code moves yet; this just exposes the kernel driver surface in Base.
+- ☐ **E2. Build `HCore.Packages.Nexus`** — new package referencing only
+      `HCore.Modules.Base` + the upstream `AFCP` + `KASerializer` libs. Move
+      `AfcpKernelService`/`VfsAfcpProvider`/`RemoteFileSystem`/`RemoteModuleProxy`/
+      `FastMethodInfo` + the HCore verb messages (`Sync`/`Read`/`Write`/`Subscribe`/
+      `Call`) out of the kernel. Ride the upstream byte-stream stack instead of the
+      duplicated V2-port transport. Register as `IRemoteMountHook` + `@afcp`
+      kernel-service. `afcp test` self-test moves verbatim.
+- ☐ **E3. Retire `HCore.Main`'s AFCP reference** — drop the `<ProjectReference>` to
+      `AFCP/`, delete the kernel-space bridge files, update `AGENTS.md`. The shell's
+      `afcp` command is unchanged (already goes through `IAfcpKernel`).
+
+**Sequencing:** E1 ∥ nothing (can start immediately, no upstream dependency).
+E2 needs E1. E3 after E2's self-test passes. E0 is done and is a prerequisite for
+E2's "ride the upstream stack" step (but E2 can land riding the current V2-port
+transport if E0.B's swap is deferred — see AFCP_ORGANIZATION.md §7).
+
+---
+
+## F. Package system — distribution & shell extension
+
+> **Design:** [packages/PACKAGE_SYSTEM.md](packages/PACKAGE_SYSTEM.md)
+
+The monorepo is temporary. Each `HCore.Packages.*` module will live in its own
+GitHub repo. This requires a distribution format (`.hpk`), a package manager
+(`hpm`), and a shell extension point so packages can contribute commands.
+
+- ☐ **F1. Contracts** — move `ICommand`+`ShellContext` from HShell to Base;
+      add `IOneshotCommand`; add `IShell.RegisterCommand(ICommand)`.
+- ☐ **F2. Shell infrastructure** — delete old `ICommand.cs`, create
+      `ManifestCommand` proxy (spawn/run/kill children for oneshot commands),
+      add manifest.json reader to `ShellImplement`, implement `RegisterCommand`.
+- ☐ **F3. `HCore.Packages.Hpm`** — new package implementing `IOneshotCommand`
+      with `install`/`list`/`remove`/`pack` sub-commands. `install` extracts a
+      `.hpk` tar.gz into `/packs/`; `pack` shells out to `dotnet publish` and
+      produces a `.hpk`; `list`/`remove` operate on `/packs/`.
+- ☐ **F4. Round-trip test** — create a dummy package, `hpm pack` it, `hpm install`
+      it, verify its commands appear in the shell, `hpm remove` it.
+
+**Sequencing:** F1 → F2 → F3 → F4. F1+F2 are independent of everything else;
+F3 is the first consumer. F4 validates the whole chain.
 
 ---
 
@@ -284,9 +377,17 @@ B1–B6 ✅ → A1 (contracts) ✅ → A2 (impl) ✅ → A3 (demo) ✅ → [loca
                                                                       ↓
                                                            C7c/C2 (MKCall proxy) ✅ → [remote GetModuleInterface<T> SHIPPED]
                                                                       ↓
-                                C7d (typed errors) / C7e (streaming) / C7f (reconnect) — on demand
-                                                                     ↓
+                               ┌─ E0.A (KASerializer) ✅ ─┐
+                               │  E0.B (AFCP protocol) ✅ │  upstream libs split out, HCore-free
+                               └──────────────────────────┘
+                                                                      ↓
+                                ┌─ F1 (Base contracts) → F2 (shell infra) → F3 (hpm module) → F4 (round-trip test)
+                                                                      ↓
+                                E1 (Base contract surfaces) → E2 (HCore.Packages.Afcp module) → E3 (retire kernel ref)
+                                                                      ↓
+                                C7d (typed errors) / C7e (streaming) / C7f (reconnect — infra now in upstream lib)
+                                                                      ↓
                                C3 (capability — gates production writes) / C4 (config) / C5 (dynamic invocation)
-                                                                     ↓
+                                                                      ↓
                                D1 (pull) / D2 (pool) — on demand
 ```
