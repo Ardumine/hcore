@@ -1,5 +1,5 @@
-using System.ComponentModel.DataAnnotations;
 using System.Diagnostics;
+using System.Text.Json;
 using HCore.Modules.Base;
 using HCore.Packages.HShell.Shell.Commands;
 
@@ -16,6 +16,7 @@ namespace HCore.Packages.HShell.Shell;
 public class ShellImplement : BaseImplement, IShell
 {
     private readonly CommandRegistry _registry = new();
+    private bool _manifestsLoaded;
 
     public ShellImplement()
     {
@@ -35,6 +36,8 @@ public class ShellImplement : BaseImplement, IShell
         ReadLine.AutoCompletionHandler = new AutoCompletionHandler(_registry, Vfs);
 
         Vfs.SetWorkingDirectory("/");
+
+        LoadManifestCommands();
 
         while (!ctx.ExitRequested)
         {
@@ -85,6 +88,8 @@ public class ShellImplement : BaseImplement, IShell
         }
 
         Vfs.SetWorkingDirectory("/");
+
+        LoadManifestCommands();
 
         foreach (var raw in text.Split('\n', '\r'))
         {
@@ -169,4 +174,55 @@ public class ShellImplement : BaseImplement, IShell
     }
 
     public void RegisterCommand(ICommand command) => _registry.Register(command);
+
+    private void LoadManifestCommands()
+    {
+        if (_manifestsLoaded) return;
+        _manifestsLoaded = true;
+
+        try
+        {
+            foreach (var pack in Vfs.ListDirectory("/packs"))
+            {
+                var manifestPath = $"/packs/{pack}/manifest.json";
+                if (!Vfs.Exists(manifestPath)) continue;
+
+                try
+                {
+                    var json = Vfs.ReadAllText(manifestPath);
+                    var manifest = JsonSerializer.Deserialize<PackManifest>(json);
+                    if (manifest?.commands is null) continue;
+
+                    foreach (var cmd in manifest.commands)
+                    {
+                        if (string.Equals(cmd.mode, "oneshot", StringComparison.OrdinalIgnoreCase))
+                        {
+                            _registry.Register(new ManifestCommand(cmd.name, cmd.description, cmd.moduleName));
+                        }
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private sealed class PackManifest
+    {
+        public string? name { get; set; }
+        public string? version { get; set; }
+        public CommandEntry[]? commands { get; set; }
+    }
+
+    private sealed class CommandEntry
+    {
+        public string name { get; set; } = "";
+        public string description { get; set; } = "";
+        public string mode { get; set; } = "";
+        public string moduleName { get; set; } = "";
+    }
 }
