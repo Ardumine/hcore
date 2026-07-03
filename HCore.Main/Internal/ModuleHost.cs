@@ -79,15 +79,15 @@ public sealed class ModuleHost : IModuleHost
     /// </summary>
     public T GetModuleInterface<T>(string instancePath) where T : class, IModule
     {
-        // Layer 3 — MKCall: a path that resolves to a RemoteFileSystem is served
-        // by another kernel. Return a marshalling proxy instead of a local instance.
-        // Checked first so a remote path like "/other/proc/lidar" never reaches the
-        // /proc-only InstanceNameFromPath validation below (mirrors the
-        // TryResolveMount redirect in DataHost.Subscribe<T>).
+        // Layer 3 — MKCall: a path that resolves to a remote VFS mount backed by
+        // another kernel. If the mount provides an IRemoteCallProvider, return a
+        // marshalling proxy instead of a local instance. Checked first so a remote
+        // path like "/other/proc/lidar" never reaches the /proc-only
+        // InstanceNameFromPath validation below.
         if (_vfs.TryResolveMount(instancePath, out var mountFs, out var remotePath)
-            && mountFs is RemoteFileSystem remote)
+            && mountFs is IRemoteCallProvider callProvider)
         {
-            return RemoteModuleProxy<T>.Create(remote.Client, remotePath);
+            return callProvider.CreateProxy<T>(remotePath);
         }
 
         var instanceName = InstanceNameFromPath(instancePath);

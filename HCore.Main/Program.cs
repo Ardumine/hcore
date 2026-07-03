@@ -39,6 +39,10 @@ internal static class Program
         // shell can reach it via GetModuleInterface<IAfcpKernel>("@afcp").
         host.RegisterKernelService("@afcp", new AfcpKernelService(_vfs, host, dataHost));
 
+        // Register the composite VFS as a kernel service so privileged modules
+        // (e.g. Nexus) can mount/unmount and navigate the full tree.
+        host.RegisterKernelService("@vfs", _vfs);
+
         // The init module (PID 1) — the kernel spawns it explicitly, then runs it.
         var initModule = host.Spawn<IRunnable>("HCore.Packages.HInit.Init", "init");
 

@@ -34,7 +34,7 @@ public interface IVfsKernel : IModule
     IEnumerable<string> ListDirectory(string path);
     IVirtualFile GetFile(string path);
     IVirtualFile CreateFile(string path, byte[]? contents = null, bool overwrite = true);
-    void MkDir(string path);
+    IVirtualDirectory MkDir(string path);
     bool DeleteFile(string path);
     bool Exists(string path);
 }

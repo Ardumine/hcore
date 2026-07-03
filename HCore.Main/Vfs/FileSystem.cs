@@ -3,10 +3,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using HCore.Modules.Base;
+using System.Diagnostics.CodeAnalysis;
 
 namespace HCore.Main.Vfs;
 
-public sealed class FileSystem
+public sealed class FileSystem : IVfsKernel
 {
     private readonly List<MountEntry> _mounts = new();
 
@@ -417,7 +418,7 @@ public sealed class FileSystem
     /// by <see cref="Internal.DataHost"/> to detect a remote-mounted facet path and
     /// redirect the subscribe to the peer. Absolute paths only (working dir <c>/</c>).
     /// </summary>
-    internal bool TryResolveMount(string path, out IVirtualFileSystem fileSystem, out string remotePath)
+    public bool TryResolveMount(string path, [MaybeNullWhen(false)] out IVirtualFileSystem fileSystem, out string remotePath)
     {
         try
         {
@@ -463,6 +464,14 @@ public sealed class FileSystem
             .Where(m => m.Segments.Length == childDepth && PathHelpers.IsPrefix(parentSegments, m.Segments))
             .Select(m => m.Segments[^1]);
     }
+
+    void IVfsKernel.Mount(string mountPoint, IVirtualFileSystem fs) => Mount(mountPoint, fs);
+    IEnumerable<string> IVfsKernel.ListDirectory(string path) => ListDirectory(path);
+    IVirtualFile IVfsKernel.GetFile(string path) => GetFile(path);
+    IVirtualFile IVfsKernel.CreateFile(string path, byte[]? contents, bool overwrite) => CreateFile(path, contents, overwrite);
+    IVirtualDirectory IVfsKernel.MkDir(string path) => MkDir(path);
+    bool IVfsKernel.DeleteFile(string path) => DeleteFile(path);
+    bool IVfsKernel.Exists(string path) => Exists(path);
 
     private sealed record MountEntry(string Path, string[] Segments, IVirtualFileSystem FileSystem);
 }
