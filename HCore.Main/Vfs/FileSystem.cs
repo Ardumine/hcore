@@ -490,5 +490,7 @@ public sealed class FileSystem : IVfsKernel, IKernelVfs
 
     bool IKernelVfs.DeleteFile(string path) => DeleteFile(path);
 
+    bool IKernelVfs.Exists(string path) => Exists(path);
+
     private sealed record MountEntry(string Path, string[] Segments, IVirtualFileSystem FileSystem);
 }

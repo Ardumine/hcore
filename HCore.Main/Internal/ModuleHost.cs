@@ -442,6 +442,8 @@ public sealed class ModuleHost : IModuleHost, IModuleResolver
     internal Type? GetModuleInterfaceType(string moduleName)
         => _descriptors.FirstOrDefault(d => d.DeclaredDescriptor.Name == moduleName)?.DeclaredDescriptor.InterfaceType;
 
+    Type? IModuleResolver.GetModuleInterfaceType(string moduleName) => GetModuleInterfaceType(moduleName);
+
     /// <summary>
     /// Build a remote MKCall proxy for a runtime-resolved interface <see cref="Type"/>.
     /// Used by the AFCP self-test, which cannot name <c>ILidar</c> at compile time

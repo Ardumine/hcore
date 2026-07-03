@@ -35,9 +35,19 @@ internal static class Program
         // Expose the running modules as a live /proc tree (like Linux/Plan 9).
         _vfs.Mount("/proc", new ProcFileSystem(host, dataHost));
 
-        // Register the kernel-space AFCP bridge as a named kernel service so the
-        // shell can reach it via GetModuleInterface<IAfcpKernel>("@afcp").
-        host.RegisterKernelService("@afcp", new AfcpKernelService(_vfs, host, dataHost));
+        // Spawn the AFCP Nexus connector module (replaces the kernel-space bridge).
+        // Nexus provides the IAfcpKernel shell-facing contract, receives privileged
+        // driver doors via IDriverModule, and registers as the IRemoteMountHook so
+        // the kernel transparently redirects remote subscribe/call through it.
+        var nexus = host.Spawn<IAfcpKernel>("HCore.Packages.Nexus.Nexus", "nexus");
+        if (nexus is IDriverModule driver)
+            driver.Init(_vfs, dataHost, host);
+        if (nexus is IRemoteMountHook hook)
+        {
+            host.RegisterRemoteMountHook(hook);
+            dataHost.RegisterRemoteMountHook(hook);
+        }
+        host.RegisterKernelService("@afcp", nexus);
 
         // Register the composite VFS as a kernel service so privileged modules
         // (e.g. Nexus) can mount/unmount and navigate the full tree.

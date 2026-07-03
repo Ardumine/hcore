@@ -19,6 +19,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Packages.Sensor", "HC
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AFCP", "AFCP\AFCP.csproj", "{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Packages.Nexus", "HCore.Packages.Nexus\HCore.Packages.Nexus.csproj", "{0C21FE61-4B07-439F-B9E5-B97184BE8F22}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KASerializer", "afcp\kaserializer\src\KASerializer\KASerializer.csproj", "{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -125,8 +129,32 @@ Global
 		{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}.Release|x64.Build.0 = Release|Any CPU
 		{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}.Release|x86.ActiveCfg = Release|Any CPU
 		{06745DC9-FC87-4BF2-AED1-7FABFFAF30E7}.Release|x86.Build.0 = Release|Any CPU
+		{0C21FE61-4B07-439F-B9E5-B97184BE8F22}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0C21FE61-4B07-439F-B9E5-B97184BE8F22}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0C21FE61-4B07-439F-B9E5-B97184BE8F22}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{0C21FE61-4B07-439F-B9E5-B97184BE8F22}.Debug|x64.Build.0 = Debug|Any CPU
+		{0C21FE61-4B07-439F-B9E5-B97184BE8F22}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{0C21FE61-4B07-439F-B9E5-B97184BE8F22}.Debug|x86.Build.0 = Debug|Any CPU
+		{0C21FE61-4B07-439F-B9E5-B97184BE8F22}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0C21FE61-4B07-439F-B9E5-B97184BE8F22}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0C21FE61-4B07-439F-B9E5-B97184BE8F22}.Release|x64.ActiveCfg = Release|Any CPU
+		{0C21FE61-4B07-439F-B9E5-B97184BE8F22}.Release|x64.Build.0 = Release|Any CPU
+		{0C21FE61-4B07-439F-B9E5-B97184BE8F22}.Release|x86.ActiveCfg = Release|Any CPU
+		{0C21FE61-4B07-439F-B9E5-B97184BE8F22}.Release|x86.Build.0 = Release|Any CPU
+		{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}.Debug|x64.Build.0 = Debug|Any CPU
+		{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}.Debug|x86.Build.0 = Debug|Any CPU
+		{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}.Release|x64.ActiveCfg = Release|Any CPU
+		{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}.Release|x64.Build.0 = Release|Any CPU
+		{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}.Release|x86.ActiveCfg = Release|Any CPU
+		{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
-EndGlobal
+	GlobalSection(NestedProjects) = preSolution

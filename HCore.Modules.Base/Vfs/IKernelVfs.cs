@@ -47,4 +47,7 @@ public interface IKernelVfs
 
     /// <summary>Delete a file or empty directory.</summary>
     bool DeleteFile(string path);
+
+    /// <summary>Check whether a path exists in the VFS tree.</summary>
+    bool Exists(string path);
 }

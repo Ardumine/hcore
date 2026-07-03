@@ -16,5 +16,13 @@ public interface IModuleResolver
     /// Returns <c>false</c> if nothing is running at that path. Kernel-space
     /// <c>@</c>-services are intentionally NOT reachable here.
     /// </summary>
-    bool TryResolveInstance(string instancePath, [MaybeNullWhen(false)] out IModule instance);
+    bool TryResolveInstance(string instancePath, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out IModule instance);
+
+    /// <summary>
+    /// Look up the declared interface <see cref="System.Type"/> for a registered
+    /// module by its module name. Returns <c>null</c> if no module with that name
+    /// is registered. Used by the AFCP self-test to build reflective MKCall
+    /// proxies for package-defined interface types.
+    /// </summary>
+    System.Type? GetModuleInterfaceType(string moduleName);
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -36,5 +37,6 @@ public interface IRemoteMountHook
     /// does not resolve to a remote mount; otherwise returns a transparent
     /// MKCall proxy backed by the remote peer.
     /// </summary>
-    T? TryGetRemoteInterface<T>(string instancePath) where T : class, IModule;
+    [return: MaybeNull]
+    T TryGetRemoteInterface<T>(string instancePath) where T : class, IModule;
 }

@@ -1,9 +1,8 @@
 using System;
-using HCore.Modules.Base;
 
-namespace HCore.Main.Vfs;
+namespace HCore.Modules.Base;
 
-internal abstract class VirtualNode : IVirtualNode
+public abstract class VirtualNode : IVirtualNode
 {
     protected VirtualNode(string name, IVirtualDirectory? parent)
     {
