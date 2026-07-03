@@ -59,6 +59,22 @@ public abstract class BaseImplement : IModule
 	}
 
 	/// <summary>
+	/// A kernel-managed cooperative cancellation signal for THIS instance. The
+	/// kernel cancels it when the instance is reaped (killed directly, or as part
+	/// of a parent's cascade), just before <see cref="OnKilled"/> runs. Long-running
+	/// modules should observe this token in their loops / pass it to
+	/// <c>Task.Delay</c>, <c>Task.Run</c>, etc. so a <c>kill</c> actually stops
+	/// their work — no need to hand-roll a private <see cref="CancellationTokenSource"/>.
+	/// Defaults to <see cref="CancellationToken.None"/> until the kernel attaches one.
+	/// </summary>
+	public CancellationToken StopToken { get; private set; } = CancellationToken.None;
+
+	public void AttachStopToken(CancellationToken token)
+	{
+		StopToken = token;
+	}
+
+	/// <summary>
 	/// Called by the kernel when this instance is reaped (killed directly, or as
 	/// part of a parent's cascade). Override to release resources; default is a
 	/// no-op. Runs outside the kernel's process-table lock.

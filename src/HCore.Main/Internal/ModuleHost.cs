@@ -285,7 +285,15 @@ public sealed class ModuleHost : IModuleHost, IModuleResolver
         List<RunningInstance> reaped;
         lock (_instancesLock)
         {
-            if (!_instances.TryGetValue(childName, out var child) || child.ParentName != ownerName)
+            if (!_instances.TryGetValue(childName, out var child))
+            {
+                // Already gone (e.g. it killed itself) — killing a dead child is a
+                // no-op, not an error. Only a live instance owned by someone else
+                // is a genuine ownership violation.
+                return;
+            }
+
+            if (child.ParentName != ownerName)
             {
                 throw new InvalidOperationException($"'{leafName}' is not a child of '{ownerName}'.");
             }
@@ -349,8 +357,14 @@ public sealed class ModuleHost : IModuleHost, IModuleResolver
     {
         foreach (var instance in reaped)
         {
+            // Fire the kernel-managed cooperative stop signal FIRST, so a
+            // long-running module's loops unwind before/while its OnKilled runs.
+            try { instance.Cts.Cancel(); } catch { /* observer callbacks must not break the reap */ }
+
             _dataHost.NotifyProducerKilled(instance.InstanceName);
             instance.Instance.OnKilled();
+
+            instance.Cts.Dispose();
         }
     }
 
@@ -453,7 +467,11 @@ public sealed class ModuleHost : IModuleHost, IModuleResolver
         instance.AttachLogger(new ModuleLogger(instanceName));
         instance.AttachData(new ScopedDataHost(_dataHost, instanceName));
 
-        return new RunningInstance(instanceName, instance, descriptor, parentName);
+        // Per-instance cooperative kill signal, cancelled when the instance is reaped.
+        var cts = new CancellationTokenSource();
+        instance.AttachStopToken(cts.Token);
+
+        return new RunningInstance(instanceName, instance, descriptor, parentName, cts);
     }
 
     private static T Cast<T>(BaseImplement instance, string id) where T : IModule
@@ -461,7 +479,7 @@ public sealed class ModuleHost : IModuleHost, IModuleResolver
             ? typed
             : throw new InvalidOperationException($"Instance '{id}' does not implement {typeof(T).FullName}.");
 
-    private sealed record RunningInstance(string InstanceName, BaseImplement Instance, IModuleDescriptor Descriptor, string? ParentName);
+    private sealed record RunningInstance(string InstanceName, BaseImplement Instance, IModuleDescriptor Descriptor, string? ParentName, CancellationTokenSource Cts);
 }
 
 /// <summary>Read-only view of one running instance, used to render /proc.</summary>

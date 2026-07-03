@@ -71,6 +71,13 @@ public class InitImplement : ContainerImplement, IInit, IServiceManager
 
     public ServiceStatus StopService(string name)
     {
+        // A service with no script on disk isn't something we can stop — report
+        // Failed instead of a misleading "Stopped" for a non-existent service.
+        if (!Vfs.FileExists(ScriptPath(name)))
+        {
+            return ServiceStatus.Failed;
+        }
+
         if (!IsRunning(name))
         {
             return ServiceStatus.Stopped;

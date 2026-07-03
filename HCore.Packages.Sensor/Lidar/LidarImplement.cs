@@ -11,14 +11,13 @@ namespace HCore.Packages.Sensor.Lidar;
 public sealed class LidarImplement : BaseImplement, ILidar, IRunnable
 {
     private IExposedData<ScanFrame>? _scan;
-    private CancellationTokenSource? _cts;
     private int _frameRateHz = 10;
 
     public void Run()
     {
         _scan = Data.ExposeData<ScanFrame>("scan_data", FacetKind.Stream, formatter: FormatFrame);
-        _cts = new CancellationTokenSource();
-        _ = Task.Run(() => PublishLoop(_cts.Token));
+        // Observe the kernel-managed StopToken: kill cancels it and the loop ends.
+        _ = Task.Run(() => PublishLoop(StopToken));
     }
 
     // --- ILidar (exercised by the AFCP Layer 3 MKCall self-test) ---
@@ -59,9 +58,4 @@ public sealed class LidarImplement : BaseImplement, ILidar, IRunnable
            $"angle_min:   {f.AngleMin:F3}\n" +
            $"angle_max:   {f.AngleMax:F3}\n" +
            $"ranges:      [{f.Ranges.Length} samples]";
-
-    protected override void OnKilled()
-    {
-        _cts?.Cancel();
-    }
 }
