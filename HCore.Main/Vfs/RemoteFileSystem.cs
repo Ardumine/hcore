@@ -7,27 +7,6 @@ using System.Threading.Channels;
 namespace HCore.Main.Vfs;
 
 /// <summary>
-/// Implemented by a mount that can back a remote data-plane subscription. Lets
-/// <see cref="Internal.DataHost"/> redirect an <c>IDataHost.Subscribe&lt;T&gt;</c>
-/// on a mounted path to the remote peer without <c>DataHost</c> depending on any
-/// AFCP type — it only sees this interface plus <see cref="IVirtualFileSystem"/>.
-/// </summary>
-internal interface IRemoteDataSource
-{
-    /// <summary>
-    /// Subscribe to a facet on the remote peer. <paramref name="remotePath"/> is
-    /// the path as the peer sees it (mount prefix already stripped, e.g.
-    /// <c>/proc/lidar/scan_data</c>). Semantics mirror the local
-    /// <c>IDataHost.Subscribe&lt;T&gt;</c>: single-consumer, ordered handler
-    /// invocation, observable <see cref="ISubscription.State"/>.
-    /// </summary>
-    ISubscription SubscribeData<T>(
-        string remotePath,
-        Func<DataEvent<T>, CancellationToken, ValueTask> handler,
-        Action<DisconnectReason>? onDisconnected) where T : class;
-}
-
-/// <summary>
 /// A read-write <see cref="IVirtualFileSystem"/> backed by a remote AFCP peer.
 /// Serves the peer's entire root tree (not just <c>/proc</c>): the peer's
 /// <c>VfsAfcpProvider</c> proxies its kernel <see cref="FileSystem"/>, which
