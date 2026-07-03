@@ -326,17 +326,20 @@ The monorepo is temporary. Each `HCore.Packages.*` module will live in its own
 GitHub repo. This requires a distribution format (`.hpk`), a package manager
 (`hpm`), and a shell extension point so packages can contribute commands.
 
-- ☐ **F1. Contracts** — move `ICommand`+`ShellContext` from HShell to Base;
-      add `IOneshotCommand`; add `IShell.RegisterCommand(ICommand)`.
-- ☐ **F2. Shell infrastructure** — delete old `ICommand.cs`, create
-      `ManifestCommand` proxy (spawn/run/kill children for oneshot commands),
-      add manifest.json reader to `ShellImplement`, implement `RegisterCommand`.
-- ☐ **F3. `HCore.Packages.Hpm`** — new package implementing `IOneshotCommand`
-      with `install`/`list`/`remove`/`pack` sub-commands. `install` extracts a
-      `.hpk` tar.gz into `/packs/`; `pack` shells out to `dotnet publish` and
-      produces a `.hpk`; `list`/`remove` operate on `/packs/`.
-- ☐ **F4. Round-trip test** — create a dummy package, `hpm pack` it, `hpm install`
-      it, verify its commands appear in the shell, `hpm remove` it.
+- ✅ **F1. Contracts** — moved `ICommand`+`ShellContext` from HShell to Base;
+      added `IOneshotCommand`; added `IShell.RegisterCommand(ICommand)`.
+- ✅ **F2. Shell infrastructure** — created `ManifestCommand` proxy (spawn/run/kill
+      children for oneshot commands), added manifest.json reader to `ShellImplement`,
+      implemented `RegisterCommand`.
+- ✅ **F3. `HCore.Packages.Hpm`** — new module implementing `IOneshotCommand`
+      with `install`/`list`/`remove`/`pack` sub-commands. Extracted to
+      [standalone repo](https://github.com/Ardumine/hpm).
+- ✅ **F4. Round-trip test** — created `HCore.Packages.Hello` sample module,
+      verified full lifecycle (build → deploy → discover → run → remove).
+      Extracted to [standalone repo](https://github.com/Ardumine/hhello).
+- ✅ **HShell standalone** — extracted to
+      [github.com/Ardumine/hshell](https://github.com/Ardumine/hshell);
+      removed from hcore.sln.
 
 **Sequencing:** F1 → F2 → F3 → F4. F1+F2 are independent of everything else;
 F3 is the first consumer. F4 validates the whole chain.
@@ -381,9 +384,9 @@ B1–B6 ✅ → A1 (contracts) ✅ → A2 (impl) ✅ → A3 (demo) ✅ → [loca
                                │  E0.B (AFCP protocol) ✅ │  upstream libs split out, HCore-free
                                └──────────────────────────┘
                                                                       ↓
-                                ┌─ F1 (Base contracts) → F2 (shell infra) → F3 (hpm module) → F4 (round-trip test)
+                                ┌─ F1 (contracts) → F2 (shell infra) → F3 (hpm) → F4 (test) → HShell standalone ✅
                                                                       ↓
-                                E1 (Base contract surfaces) → E2 (HCore.Packages.Afcp module) → E3 (retire kernel ref)
+                                E1 (Base contract surfaces) → E2 (HCore.Packages.Nexus) → E3 (retire kernel ref)
                                                                       ↓
                                 C7d (typed errors) / C7e (streaming) / C7f (reconnect — infra now in upstream lib)
                                                                       ↓
