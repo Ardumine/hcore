@@ -98,21 +98,12 @@ public sealed class DataHost : IFacetView
         Func<DataEvent<T>, CancellationToken, ValueTask> handler,
         Action<DisconnectReason>? onDisconnected) where T : class
     {
-        // Remote-mount hook (Phase 1 — E1): if a driver module (e.g. AFCP Nexus)
+        // Remote-mount hook (Phase E2): if a driver module (e.g. AFCP Nexus)
         // registered one, consult it first. Returns null for local paths.
         if (_remoteMountHook is not null)
         {
             var remote = _remoteMountHook.TrySubscribeRemote<T>(facetPath, handler, onDisconnected);
             if (remote is not null) return remote;
-        }
-
-        // Remoteness is a path prefix: if the path resolves to a remote AFCP mount,
-        // redirect the subscribe to the peer transparently. Local /proc paths resolve
-        // to ProcFileSystem (not an IRemoteDataSource) and fall through below.
-        if (_vfs.TryResolveMount(facetPath, out var fs, out var remotePath)
-            && fs is IRemoteDataSource remoteDs)
-        {
-            return remoteDs.SubscribeData<T>(remotePath, handler, onDisconnected);
         }
 
         var (instance, facetName) = ParseFacetPath(facetPath);
