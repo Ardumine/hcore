@@ -4,6 +4,7 @@ using System.Runtime.Loader;
 using HCore.Modules.Base;
 using Logyt;
 using HCore.Main.Internal;
+using HCore.Main.Bootstrap;
 
 namespace HCore.Main;
 
@@ -15,6 +16,7 @@ internal static class Program
     private static readonly List<LoadedModuleDescriptor> _loadedModuleDescriptors = [];
     private static ConsoleLogyt _kernelLog = null!;
     private static string _fsRoot = null!;
+    private static bool _modulesLoaded;
 
 
     public static void Main(string[] args)
@@ -29,6 +31,19 @@ internal static class Program
 
         _kernelLog.I("Starting...");
         Init();
+
+        // On first boot with empty /packs/, run bootstrap to fetch or
+        // copy-in the essential packages (init, shell, hpm).
+        if (!VfsProxy().DirectoryExists("/packs/HCore.Packages.HInit"))
+        {
+            _kernelLog.I("Essential packages missing — running bootstrap...");
+            var bootstrap = new Bootstrap.Bootstrap();
+            if (bootstrap.Run(VfsProxy(), new BootstrapLogger(_kernelLog)))
+            {
+                _kernelLog.I("Bootstrap complete — re-scanning packs...");
+                ReloadModPacks();
+            }
+        }
 
         // The module host knows every loaded module and brokers references
         // between them. It is what a module talks to when it wants to call
@@ -223,6 +238,31 @@ internal static class Program
                     descriptors.Add(result);
 
         return descriptors;
+    }
+
+    private static ModuleFileSystemProxy VfsProxy()
+        => new(_vfs, _vfsModuleProxyLock, "/");
+
+    private static void ReloadModPacks()
+    {
+        if (_modulesLoaded)
+            return;
+
+        var modPacksInfo = ListModPacks("/packs");
+        _kernelLog.I($"Bootstrap: found {modPacksInfo.Count} modpacks!");
+
+        var loadedModuleDescriptors = LoadModPacksAndRegisterModules(modPacksInfo);
+        _kernelLog.I($"Bootstrap: registered {loadedModuleDescriptors.Count} modules!");
+        _modulesLoaded = true;
+    }
+
+    private sealed class BootstrapLogger(Logyt.ConsoleLogyt logyt) : IModuleLogger
+    {
+        public string Description => "bootstrap";
+
+        public void I(string message) => logyt.I(message);
+        public void W(string message) => logyt.W(message);
+        public void E(string message) => logyt.Log(MessageType.Error, message);
     }
 
     //https://stackoverflow.com/questions/40384619/how-to-load-assembly-from-stream-in-net-core
