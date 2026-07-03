@@ -304,16 +304,20 @@ abstraction, the connector is a driver — like a filesystem module in Linux).
       have a hook field + `RegisterRemoteMountHook` setter; `GetModuleInterface<T>`
       and `Subscribe<T>` consult the hook *before* the local `/proc` parse.
       No AFCP code moved yet; Phase 1 only exposes the kernel driver surface.
-- ☐ **E2. Build `HCore.Packages.Nexus`** — new package referencing only
-      `HCore.Modules.Base` + the upstream `AFCP` + `KASerializer` libs. Move
+- ✅ **E2. Build `HCore.Packages.Nexus`** — new package referencing
+      `HCore.Modules.Base` + the upstream `KASerializer` lib. Moved
       `AfcpKernelService`/`VfsAfcpProvider`/`RemoteFileSystem`/`RemoteModuleProxy`/
-      `FastMethodInfo` + the HCore verb messages (`Sync`/`Read`/`Write`/`Subscribe`/
-      `Call`) out of the kernel. Ride the upstream byte-stream stack instead of the
-      duplicated V2-port transport. Register as `IRemoteMountHook` + `@afcp`
-      kernel-service. `afcp test` self-test moves verbatim.
-- ☐ **E3. Retire `HCore.Main`'s AFCP reference** — drop the `<ProjectReference>` to
-      `AFCP/`, delete the kernel-space bridge files, update `AGENTS.md`. The shell's
-      `afcp` command is unchanged (already goes through `IAfcpKernel`).
+      `FastMethodInfo` + the in-tree AFCP protocol/transport/streams/multiplex
+      out of the kernel into the module. Registered as `IRemoteMountHook` + `@afcp`
+      kernel-service via `IDriverModule.Init`. `afcp test` self-test passes
+      (Layer 1 VFS, Layer 2 subscribe-push, Layer 3 MKCall, ProducerKilled).
+      Upstream AFCP transport swap (E2.1) deferred — module currently rides the
+      in-tree V2-port transport (copied in, not duplicated).
+- ✅ **E3. Retire `HCore.Main`'s AFCP reference** — dropped the `<ProjectReference>`
+      to `AFCP/`, deleted kernel-space bridge files (moved to Nexus during E2),
+      removed `IRemoteDataSource` inline check from `DataHost.Subscribe<T>`.
+      The kernel's `ModuleHost`/`DataHost` now go exclusively through the
+      `IRemoteMountHook` for remote paths.
 
 **Sequencing:** E1 ∥ nothing (can start immediately, no upstream dependency).
 E2 needs E1. E3 after E2's self-test passes. E0 is done and is a prerequisite for
