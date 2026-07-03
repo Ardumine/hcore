@@ -16,7 +16,7 @@ namespace HCore.Main.Internal;
 /// </summary>
 public sealed class DataHost
 {
-    private readonly Dictionary<(string Instance, string Facet), IFacet> _facets = new();
+    private readonly Dictionary<(string Instance, string Facet), IInternalFacet> _facets = new();
     private readonly object _lock = new();
 
     // The kernel VFS, consulted in Subscribe<T> to detect a remote-mounted facet
@@ -59,7 +59,7 @@ public sealed class DataHost
     public T? ReadData<T>(string facetPath) where T : class
     {
         var (instance, facetName) = ParseFacetPath(facetPath);
-        IFacet? raw;
+        IInternalFacet? raw;
         lock (_lock)
         {
             _facets.TryGetValue((instance, facetName), out raw);
@@ -94,7 +94,7 @@ public sealed class DataHost
         }
 
         var (instance, facetName) = ParseFacetPath(facetPath);
-        IFacet? raw;
+        IInternalFacet? raw;
         lock (_lock)
         {
             _facets.TryGetValue((instance, facetName), out raw);
@@ -123,7 +123,7 @@ public sealed class DataHost
     /// </summary>
     public void NotifyProducerKilled(string instanceName)
     {
-        List<IFacet> toKill;
+        List<IInternalFacet> toKill;
         lock (_lock)
         {
             toKill = _facets
@@ -160,7 +160,7 @@ public sealed class DataHost
     /// without going through the typed <see cref="ReadData{T}"/> path (which
     /// requires the caller to know the value type at compile time).
     /// </summary>
-    internal IReadOnlyList<IFacet> GetFacetSnapshot()
+    internal IReadOnlyList<IInternalFacet> GetFacetSnapshot()
     {
         lock (_lock)
         {
@@ -178,7 +178,7 @@ public sealed class DataHost
     internal string? ReadFormatted(string facetPath)
     {
         var (instance, facetName) = ParseFacetPath(facetPath);
-        IFacet? raw;
+        IInternalFacet? raw;
         lock (_lock)
         {
             _facets.TryGetValue((instance, facetName), out raw);
@@ -245,27 +245,8 @@ public sealed class DataHost
 }
 
 /// <summary>Non-generic facet view for the registry and <c>/proc</c> rendering.</summary>
-internal interface IFacet
+internal interface IInternalFacet : IFacet
 {
-    string InstanceName { get; }
-    string FacetName { get; }
-    FacetKind Kind { get; }
-    Type ValueType { get; }
-
-    /// <summary>Formatted current value for <c>cat</c>, or <c>null</c> if nothing published yet.</summary>
-    string? FormatForCat();
-
-    /// <summary>
-    /// Non-generic subscribe hook for callers that don't know the value type at
-    /// compile time (the AFCP serve side). The handler receives the boxed value,
-    /// plus the same <c>Sequence</c> and <c>InterFrameDelta</c> the typed
-    /// <see cref="DataEvent{T}"/> carries. Bridges to the typed
-    /// <c>Subscribe</c> — full breaker/threading/ProducerKilled semantics intact.
-    /// </summary>
-    ISubscription SubscribeRaw(
-        Func<object, long, long?, CancellationToken, ValueTask> handler,
-        Action<DisconnectReason>? onDisconnected);
-
     /// <summary>Fire <see cref="DisconnectReason.ProducerKilled"/> to every subscriber.</summary>
     void NotifyProducerKilled();
 }

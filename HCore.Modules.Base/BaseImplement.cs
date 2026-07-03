@@ -128,6 +128,8 @@ internal sealed class EmptyModuleHost : IModuleHost
 
 	public void Kill(string instancePath) => throw NotAttached();
 
+	public bool TryResolveInstance(string instancePath, out IModule instance) => throw NotAttached();
+
 	private static InvalidOperationException NotAttached() => new("Module host is not attached.");
 }
 

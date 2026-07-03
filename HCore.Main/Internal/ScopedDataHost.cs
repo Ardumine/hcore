@@ -39,4 +39,6 @@ internal sealed class ScopedDataHost : IDataHost
         Func<DataEvent<T>, CancellationToken, ValueTask> handler,
         Action<DisconnectReason>? onDisconnected = null) where T : class
         => _kernel.Subscribe(facetPath, handler, onDisconnected);
+
+    public IFacet? FindFacet(string facetPath) => _kernel.FindFacet(facetPath);
 }

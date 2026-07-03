@@ -63,6 +63,13 @@ public interface IDataHost
         string facetPath,
         Func<DataEvent<T>, CancellationToken, ValueTask> handler,
         Action<DisconnectReason>? onDisconnected = null) where T : class;
+
+    /// <summary>
+    /// Find a facet by its absolute <c>/proc/&lt;instance&gt;/&lt;facet&gt;</c> path.
+    /// Returns <c>null</c> if no facet exists at that path. Used by the serve-side
+    /// AFCP provider and the <c>/proc</c> file system for facet listing.
+    /// </summary>
+    IFacet? FindFacet(string facetPath);
 }
 
 /// <summary>
@@ -120,6 +127,8 @@ internal sealed class EmptyDataHost : IDataHost
 
     public ISubscription Subscribe<T>(string facetPath, Func<DataEvent<T>, CancellationToken, ValueTask> handler, Action<DisconnectReason>? onDisconnected = null) where T : class
         => throw NotAttached();
+
+    public IFacet? FindFacet(string facetPath) => throw NotAttached();
 
     private static InvalidOperationException NotAttached() => new("Data host is not attached.");
 }

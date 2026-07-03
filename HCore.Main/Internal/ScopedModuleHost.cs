@@ -36,4 +36,7 @@ internal sealed class ScopedModuleHost : IModuleHost
     public void KillChild(string leafName) => _kernel.KillChildCore(_owner, leafName);
 
     public void Kill(string instancePath) => _kernel.Kill(instancePath);
+
+    public bool TryResolveInstance(string instancePath, out IModule instance)
+        => _kernel.TryResolveInstance(instancePath, out instance);
 }

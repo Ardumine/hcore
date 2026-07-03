@@ -10,7 +10,7 @@ namespace HCore.Main.Internal;
 /// Implements <see cref="IExposedData{T}"/> so the producer's
 /// <see cref="IExposedData{T}.Publish"/> fans out directly here.
 /// </summary>
-internal sealed class Facet<T> : IFacet, IExposedData<T> where T : class
+internal sealed class Facet<T> : IInternalFacet, IExposedData<T> where T : class
 {
     private readonly string _instanceName;
     private readonly string _facetName;

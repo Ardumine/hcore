@@ -396,7 +396,7 @@ public sealed class ModuleHost : IModuleHost
     /// Kernel-space <c>@</c>-services are intentionally NOT reachable here —
     /// they are local singletons, not remotely-callable instances.
     /// </summary>
-    internal bool TryResolveInstance(string instancePath, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out BaseImplement instance)
+    public bool TryResolveInstance(string instancePath, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out IModule instance)
     {
         var name = InstanceNameFromPath(instancePath);
         lock (_instancesLock)
@@ -407,7 +407,7 @@ public sealed class ModuleHost : IModuleHost
                 return true;
             }
 
-            instance = null;
+            instance = null!;
             return false;
         }
     }

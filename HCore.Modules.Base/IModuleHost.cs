@@ -87,4 +87,11 @@ public interface IModuleHost
     /// </summary>
     /// <exception cref="System.InvalidOperationException">Nothing is running at that path.</exception>
     void Kill(string instancePath);
+
+    /// <summary>
+    /// Non-generic instance lookup by /proc path (or bare name). Accepts the
+    /// same path shapes as <see cref="GetModuleInterface{T}"/>. Kernel-space
+    /// <c>@</c>-services are NOT reachable here.
+    /// </summary>
+    bool TryResolveInstance(string instancePath, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out IModule instance);
 }
