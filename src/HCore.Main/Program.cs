@@ -72,6 +72,12 @@ internal static class Program
         // (e.g. Nexus) can mount/unmount and navigate the full tree.
         host.RegisterKernelService("@vfs", _vfs);
 
+        // The forge: builds + hot-loads new packages at runtime. It needs the
+        // host path of the shared contract assemblies to compile against — the
+        // directory of the currently-loaded HCore.Modules.Base.dll.
+        var referenceDir = Path.GetDirectoryName(typeof(IModule).Assembly.Location) ?? AppContext.BaseDirectory;
+        host.RegisterKernelService("@forge", new ForgeService(_vfs, _fsRoot, host, referenceDir));
+
         // The init module (PID 1) — the kernel spawns it explicitly, then runs it.
         var initModule = host.Spawn<IRunnable>("HCore.Packages.HInit.Init", "init");
 

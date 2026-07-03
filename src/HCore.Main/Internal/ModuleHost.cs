@@ -30,6 +30,13 @@ public sealed class ModuleHost : IModuleHost, IModuleResolver
     private readonly object _instancesLock = new();
 
     /// <summary>
+    /// Modules registered AFTER boot (e.g. by the forge, hot-loading a freshly
+    /// built pack). Searched before the boot-time <see cref="_descriptors"/> so a
+    /// rebuilt module's new descriptor shadows the old one.
+    /// </summary>
+    private readonly List<LoadedModuleDescriptor> _runtimeDescriptors = [];
+
+    /// <summary>
     /// Named kernel services (not module instances) reachable through
     /// <see cref="GetModuleInterface{T}"/> via a reserved <c>@</c>-prefixed name,
     /// e.g. <c>@afcp</c>. These are kernel-space singletons (like the AFCP bridge)
@@ -442,12 +449,37 @@ public sealed class ModuleHost : IModuleHost, IModuleResolver
     /// its module name. Returns <c>null</c> if no module is registered under that name.
     /// </summary>
     internal Type? GetModuleInterfaceType(string moduleName)
-        => _descriptors.FirstOrDefault(d => d.DeclaredDescriptor.Name == moduleName)?.DeclaredDescriptor.InterfaceType;
+        => (_runtimeDescriptors.FirstOrDefault(d => d.DeclaredDescriptor.Name == moduleName)
+            ?? _descriptors.FirstOrDefault(d => d.DeclaredDescriptor.Name == moduleName))
+           ?.DeclaredDescriptor.InterfaceType;
 
     Type? IModuleResolver.GetModuleInterfaceType(string moduleName) => GetModuleInterfaceType(moduleName);
 
+    /// <summary>
+    /// Register a module descriptor discovered at runtime (post-boot hot-load).
+    /// Replaces any existing descriptor with the same module name so a rebuilt
+    /// module's new code wins for subsequent spawns.
+    /// </summary>
+    internal void RegisterRuntimeDescriptor(LoadedModuleDescriptor descriptor)
+    {
+        lock (_instancesLock)
+        {
+            var name = descriptor.DeclaredDescriptor.Name;
+
+            // Remove old runtime descriptors with the same name AND their impl
+            // types from _byImplType, so SpawnChildByType doesn't pick a stale one.
+            foreach (var old in _runtimeDescriptors.Where(d => d.DeclaredDescriptor.Name == name).ToList())
+                _byImplType.Remove(old.DeclaredDescriptor.ImplementType);
+
+            _runtimeDescriptors.RemoveAll(d => d.DeclaredDescriptor.Name == name);
+            _runtimeDescriptors.Add(descriptor);
+            _byImplType[descriptor.DeclaredDescriptor.ImplementType] = descriptor;
+        }
+    }
+
     private LoadedModuleDescriptor FindDescriptor(string moduleName)
-        => _descriptors.FirstOrDefault(d => d.DeclaredDescriptor.Name == moduleName)
+        => _runtimeDescriptors.FirstOrDefault(d => d.DeclaredDescriptor.Name == moduleName)
+           ?? _descriptors.FirstOrDefault(d => d.DeclaredDescriptor.Name == moduleName)
            ?? throw new InvalidOperationException($"No module registered with name '{moduleName}'.");
 
     private RunningInstance Create(LoadedModuleDescriptor loaded, string instanceName, string? parentName)
