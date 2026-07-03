@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
-namespace HCore.Main.Vfs;
+namespace HCore.Modules.Base;
 
 public interface IVirtualFileSystem
 {
@@ -16,7 +16,8 @@ public interface IVirtualNode
 {
     string Name { get; }
     IVirtualDirectory? Parent { get; }
-    string Path { get; }
+
+    string Path => Parent is null ? "/" : Parent.Path == "/" ? $"/{Name}" : $"{Parent.Path}/{Name}";
 }
 
 public interface IVirtualDirectory : IVirtualNode

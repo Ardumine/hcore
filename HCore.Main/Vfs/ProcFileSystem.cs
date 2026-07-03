@@ -1,5 +1,6 @@
 using System.Text;
 using HCore.Main.Internal;
+using HCore.Modules.Base;
 
 namespace HCore.Main.Vfs;
 

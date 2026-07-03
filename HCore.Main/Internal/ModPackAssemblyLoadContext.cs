@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.Loader;
 using HCore.Main.Vfs;
+using HCore.Modules.Base;
 
 namespace HCore.Main.Internal;
 
