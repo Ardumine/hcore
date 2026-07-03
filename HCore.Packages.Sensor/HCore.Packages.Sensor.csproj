@@ -8,6 +8,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\src\HCore.Modules.Base\HCore.Modules.Base.csproj"/>
+        <ProjectReference Include="..\src\HCore.Modules.Robotics\HCore.Modules.Robotics.csproj"/>
     </ItemGroup>
 
     <Target Name="PostBuild" AfterTargets="PostBuildEvent">

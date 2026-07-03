@@ -8,7 +8,8 @@
     ".NETCoreApp,Version=v10.0": {
       "HCore.Packages.Sensor/1.0.0": {
         "dependencies": {
-          "HCore.Modules.Base": "1.0.0"
+          "HCore.Modules.Base": "1.0.0",
+          "HCore.Modules.Robotics": "1.0.0"
         },
         "runtime": {
           "HCore.Packages.Sensor.dll": {}
@@ -17,6 +18,17 @@
       "HCore.Modules.Base/1.0.0": {
         "runtime": {
           "HCore.Modules.Base.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "HCore.Modules.Robotics/1.0.0": {
+        "dependencies": {
+          "HCore.Modules.Base": "1.0.0"
+        },
+        "runtime": {
+          "HCore.Modules.Robotics.dll": {
             "assemblyVersion": "1.0.0.0",
             "fileVersion": "1.0.0.0"
           }
@@ -31,6 +43,11 @@
       "sha512": ""
     },
     "HCore.Modules.Base/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "HCore.Modules.Robotics/1.0.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

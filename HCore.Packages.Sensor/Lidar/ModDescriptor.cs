@@ -1,4 +1,5 @@
 using HCore.Modules.Base;
+using HCore.Modules.Robotics;
 
 namespace HCore.Packages.Sensor.Lidar;
 

@@ -1,4 +1,5 @@
 using HCore.Modules.Base;
+using HCore.Modules.Robotics;
 using KASerializer;
 using AFCP;
 using AFCP.Protocol;
@@ -171,47 +172,42 @@ public sealed class AfcpImplement : BaseImplement, IAfcpKernel, IDriverModule, I
             Log("--- cat again (fresh frame) ---");
             Log(_kernelVfs.GetFile("/selftest/proc/lidar/scan_data").ReadString().TrimEnd());
 
-            // 8. MKCall (Layer 3) — reflection-based remote proxy
-            Log("--- MKCall: resolve ILidar + build remote proxy (/selftest/proc/lidar) ---");
-            var lidarIface = _moduleResolver.GetModuleInterfaceType("HCore.Packages.Sensor.Lidar")
-                ?? throw new InvalidOperationException("Sensor lidar module not registered; cannot run MKCall self-test.");
-
-            var remoteLidar = CreateReflectiveProxy(lidarIface, "/selftest/proc/lidar");
+            // 8. MKCall (Layer 3) — typed remote proxy via ILidar
+            Log("--- MKCall: GetModuleInterface<ILidar>(/selftest/proc/lidar) ---");
+            var remoteLidar = Host.GetModuleInterface<ILidar>("/selftest/proc/lidar");
             Log("got remote proxy.");
 
-            static object CallRemote(object proxy, Type iface, string method, params object[] args)
-            {
-                var argTypes = args.Length == 0 ? Type.EmptyTypes : args.Select(a => a.GetType()).ToArray();
-                return iface.GetMethod(method, argTypes)!.Invoke(proxy, args)!;
-            }
-
             Log("--- MKCall: SetFrameRate(50) ---");
-            CallRemote(remoteLidar, lidarIface, "SetFrameRate", 50);
+            remoteLidar.SetFrameRate(50);
             Log("ok.");
 
             Log("--- MKCall: GetFrameRate() ---");
-            var rate = (int)CallRemote(remoteLidar, lidarIface, "GetFrameRate");
+            var rate = remoteLidar.GetFrameRate();
             Log($"returned {rate}");
             if (rate != 50)
                 throw new InvalidOperationException($"expected GetFrameRate()==50, got {rate}.");
 
             Log("--- MKCall: GetName() ---");
-            var name = (string)CallRemote(remoteLidar, lidarIface, "GetName");
+            var name = remoteLidar.GetName();
             Log($"returned '{name}'");
             if (string.IsNullOrEmpty(name))
                 throw new InvalidOperationException("expected a non-empty name from GetName().");
 
             // Failing call on non-existent instance
             Log("--- MKCall: failing call on /selftest/proc/nope ---");
-            var nope = CreateReflectiveProxy(lidarIface, "/selftest/proc/nope");
             try
             {
-                CallRemote(nope, lidarIface, "GetFrameRate");
+                var nope = Host.GetModuleInterface<ILidar>("/selftest/proc/nope");
+                nope.GetFrameRate();
                 throw new InvalidOperationException("expected a remote call on a missing instance to throw.");
+            }
+            catch (RemoteCallException rce)
+            {
+                Log($"correctly threw RemoteCallException: {rce.Message}");
             }
             catch (TargetInvocationException tie) when (tie.InnerException is RemoteCallException rce)
             {
-                Log($"correctly threw RemoteCallException: {rce.Message}");
+                Log($"correctly threw RemoteCallException (via TargetInvocationException): {rce.Message}");
             }
 
             // 9. Remote writes
