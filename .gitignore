@@ -135,8 +135,8 @@ _NCrunch*
 
 .idea/
 
-# Upstream AFCP/KASerializer repos (cloned separately, not part of hcore)
-afcp/
+# Upstream AFCP/KASerializer repos (git submodules — tracked in .gitmodules)
+# afcp/afcp and afcp/kaserializer are submodules, NOT ignored
 
 # HCore package files (build artifacts, not source)
 *.hpk

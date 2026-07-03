@@ -1,0 +1,6 @@
+[submodule "afcp/afcp"]
+	path = afcp/afcp
+	url = https://github.com/Ardumine/afcp
+[submodule "afcp/kaserializer"]
+	path = afcp/kaserializer
+	url = https://github.com/Ardumine/kaserializer
