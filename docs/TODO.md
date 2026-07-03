@@ -294,12 +294,16 @@ abstraction, the connector is a driver — like a filesystem module in Linux).
       → `RequestChannel` (RequestId-demuxed req/resp + 30s timeout). Stream interop
       (`StreamyFromStream`/`StreamFromStreamy`), `TcpServer`, `TransportRegistry`.
       12/12 tests. Cloned at `hcore/afcp/afcp/`. Originals preserved under `samples/`.
-- ☐ **E1. Base contract surfaces** — move `IVirtualFileSystem` to
-      `HCore.Modules.Base`; add `IKernelVfs`, `IFacetView`/`IFacet.SubscribeRaw`,
-      `IModuleResolver`, and the `IRemoteMountHook` extension point (the one new
-      design piece — lets `DataHost.Subscribe<T>`/`ModuleHost.GetModuleInterface<T>`
-      defer to a package-provided remote mount without naming its types). No AFCP
-      code moves yet; this just exposes the kernel driver surface in Base.
+- ✅ **E1. Base contract surfaces** — moved `IVirtualFileSystem` to
+      `HCore.Modules.Base` (already done — `VfsInterfaces.cs`). Added `IKernelVfs`,
+      `IFacetView`, `IModuleResolver`, and `IRemoteMountHook` (the new extension
+      point that lets `DataHost.Subscribe<T>`/`ModuleHost.GetModuleInterface<T>`
+      defer to a package-provided remote mount without naming its types).
+      `FileSystem` implements `IKernelVfs`, `DataHost` implements `IFacetView`,
+      `ModuleHost` implements `IModuleResolver`. Both `ModuleHost` and `DataHost`
+      have a hook field + `RegisterRemoteMountHook` setter; `GetModuleInterface<T>`
+      and `Subscribe<T>` consult the hook *before* the local `/proc` parse.
+      No AFCP code moved yet; Phase 1 only exposes the kernel driver surface.
 - ☐ **E2. Build `HCore.Packages.Nexus`** — new package referencing only
       `HCore.Modules.Base` + the upstream `AFCP` + `KASerializer` libs. Move
       `AfcpKernelService`/`VfsAfcpProvider`/`RemoteFileSystem`/`RemoteModuleProxy`/

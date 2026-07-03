@@ -7,7 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace HCore.Main.Vfs;
 
-public sealed class FileSystem : IVfsKernel
+public sealed class FileSystem : IVfsKernel, IKernelVfs
 {
     private readonly List<MountEntry> _mounts = new();
 
@@ -472,6 +472,23 @@ public sealed class FileSystem : IVfsKernel
     IVirtualDirectory IVfsKernel.MkDir(string path) => MkDir(path);
     bool IVfsKernel.DeleteFile(string path) => DeleteFile(path);
     bool IVfsKernel.Exists(string path) => Exists(path);
+
+    // IKernelVfs — driver door (explicit; same operations, driver-shape signatures)
+    void IKernelVfs.Mount(string mountPoint, IVirtualFileSystem fs, bool replaceExisting)
+        => Mount(mountPoint, fs, replaceExisting);
+
+    bool IKernelVfs.Unmount(string mountPoint) => Unmount(mountPoint);
+
+    IEnumerable<string> IKernelVfs.ListDirectory(string path) => ListDirectory(path);
+
+    IVirtualFile IKernelVfs.GetFile(string path) => GetFile(path);
+
+    void IKernelVfs.CreateFile(string path, byte[]? contents, bool overwrite)
+        => CreateFile(path, contents, overwrite);
+
+    void IKernelVfs.MkDir(string path) => MkDir(path);
+
+    bool IKernelVfs.DeleteFile(string path) => DeleteFile(path);
 
     private sealed record MountEntry(string Path, string[] Segments, IVirtualFileSystem FileSystem);
 }

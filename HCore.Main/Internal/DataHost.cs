@@ -13,8 +13,11 @@ namespace HCore.Main.Internal;
 /// Reaches modules only through the <see cref="IDataHost"/> surface; each created
 /// instance is injected with a <see cref="ScopedDataHost"/> (owner-bound for
 /// <c>ExposeData</c>, pass-through for <c>ReadData</c>/<c>Subscribe</c>).
+///
+/// Also implements <see cref="IFacetView"/> — the driver-door facet-lookup
+/// surface injected into driver modules (e.g. AFCP Nexus).
 /// </summary>
-public sealed class DataHost
+public sealed class DataHost : IFacetView
 {
     private readonly Dictionary<(string Instance, string Facet), IInternalFacet> _facets = new();
     private readonly object _lock = new();
@@ -24,10 +27,21 @@ public sealed class DataHost
     // is a path prefix). One-way dependency; the VFS knows nothing about DataHost.
     private readonly FileSystem _vfs;
 
+    /// <summary>
+    /// Remote-mount hook registered by a driver module (e.g. AFCP Nexus).
+    /// Null until a module registers; <see cref="Subscribe{T}"/> consults it
+    /// before the local facet lookup.
+    /// </summary>
+    private IRemoteMountHook? _remoteMountHook;
+
     public DataHost(FileSystem vfs)
     {
         _vfs = vfs;
     }
+
+    /// <summary>Register (or clear) the remote-mount hook.</summary>
+    internal void RegisterRemoteMountHook(IRemoteMountHook? hook)
+        => _remoteMountHook = hook;
 
     public IExposedData<T> ExposeData<T>(
         string owner,
@@ -84,13 +98,21 @@ public sealed class DataHost
         Func<DataEvent<T>, CancellationToken, ValueTask> handler,
         Action<DisconnectReason>? onDisconnected) where T : class
     {
+        // Remote-mount hook (Phase 1 — E1): if a driver module (e.g. AFCP Nexus)
+        // registered one, consult it first. Returns null for local paths.
+        if (_remoteMountHook is not null)
+        {
+            var remote = _remoteMountHook.TrySubscribeRemote<T>(facetPath, handler, onDisconnected);
+            if (remote is not null) return remote;
+        }
+
         // Remoteness is a path prefix: if the path resolves to a remote AFCP mount,
         // redirect the subscribe to the peer transparently. Local /proc paths resolve
         // to ProcFileSystem (not an IRemoteDataSource) and fall through below.
         if (_vfs.TryResolveMount(facetPath, out var fs, out var remotePath)
-            && fs is IRemoteDataSource remote)
+            && fs is IRemoteDataSource remoteDs)
         {
-            return remote.SubscribeData<T>(remotePath, handler, onDisconnected);
+            return remoteDs.SubscribeData<T>(remotePath, handler, onDisconnected);
         }
 
         var (instance, facetName) = ParseFacetPath(facetPath);
@@ -197,6 +219,8 @@ public sealed class DataHost
             return raw;
         }
     }
+
+    IFacet? IFacetView.FindFacet(string facetPath) => FindFacet(facetPath);
 
     private static void RejectSlash(string name, string what)
     {

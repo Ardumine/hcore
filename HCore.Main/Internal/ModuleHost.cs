@@ -14,8 +14,11 @@ namespace HCore.Main.Internal;
 ///   * a child's name is the composite "&lt;owner&gt;/&lt;leaf&gt;", and its
 ///     <see cref="RunningInstance.ParentName"/> records the owning instance —
 ///     the single edge that makes /proc nesting and cascade kill authoritative.
+///
+/// Also implements <see cref="IModuleResolver"/> — the driver-door instance-
+/// resolution surface injected into driver modules (e.g. AFCP Nexus).
 /// </summary>
-public sealed class ModuleHost : IModuleHost
+public sealed class ModuleHost : IModuleHost, IModuleResolver
 {
     private readonly FileSystem _vfs;
     private readonly object _vfsProxyLock;
@@ -35,6 +38,13 @@ public sealed class ModuleHost : IModuleHost
     /// </summary>
     private readonly Dictionary<string, object> _kernelServices = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Remote-mount hook registered by a driver module (e.g. AFCP Nexus).
+    /// Null until a module registers; <see cref="GetModuleInterface{T}"/> consults
+    /// it before the local instance lookup.
+    /// </summary>
+    private IRemoteMountHook? _remoteMountHook;
+
     /// <summary>Register a kernel-space singleton under a reserved <c>@</c>-prefixed name.</summary>
     internal void RegisterKernelService(string name, object service)
     {
@@ -48,6 +58,10 @@ public sealed class ModuleHost : IModuleHost
             _kernelServices[name] = service;
         }
     }
+
+    /// <summary>Register (or clear) the remote-mount hook.</summary>
+    internal void RegisterRemoteMountHook(IRemoteMountHook? hook)
+        => _remoteMountHook = hook;
 
     public ModuleHost(FileSystem vfs, object vfsProxyLock, DataHost dataHost, IReadOnlyList<LoadedModuleDescriptor> descriptors)
     {
@@ -79,11 +93,17 @@ public sealed class ModuleHost : IModuleHost
     /// </summary>
     public T GetModuleInterface<T>(string instancePath) where T : class, IModule
     {
-        // Layer 3 — MKCall: a path that resolves to a remote VFS mount backed by
-        // another kernel. If the mount provides an IRemoteCallProvider, return a
-        // marshalling proxy instead of a local instance. Checked first so a remote
-        // path like "/other/proc/lidar" never reaches the /proc-only
-        // InstanceNameFromPath validation below.
+        // Remote-mount hook (Phase 1 — E1): if a driver module (e.g. AFCP Nexus)
+        // registered one, consult it first. Returns null for local /proc paths.
+        if (_remoteMountHook is not null)
+        {
+            var remote = _remoteMountHook.TryGetRemoteInterface<T>(instancePath);
+            if (remote is not null) return remote;
+        }
+
+        // Layer 3 — MKCall (kernel-space bridge, V2-port): a path that resolves
+        // to a remote VFS mount backed by another kernel. Checked before the
+        // local /proc lookup so "/other/proc/lidar" never reaches it.
         if (_vfs.TryResolveMount(instancePath, out var mountFs, out var remotePath)
             && mountFs is IRemoteCallProvider callProvider)
         {
