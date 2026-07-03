@@ -340,14 +340,21 @@ public sealed class AfcpImplement : BaseImplement, IAfcpKernel, IDriverModule, I
         return long.TryParse(status.AsSpan(start, end - start), out var value) ? value : -1;
     }
 
-    /// <summary>Create a reflective RemoteModuleProxy for an interface type.</summary>
-    internal static object CreateReflectiveProxy(Type interfaceType, string remotePath)
+    /// <summary>Create a reflective RemoteModuleProxy for an interface type,
+    /// resolving the AFCP client from the mount covering <paramref name="instancePath"/>.</summary>
+    private object CreateReflectiveProxy(Type interfaceType, string instancePath)
     {
+        if (!_kernelVfs.TryResolveMount(instancePath, out var fs, out var remotePath)
+            || fs is not RemoteFileSystem remote)
+        {
+            throw new InvalidOperationException($"'{instancePath}' does not resolve to a remote AFCP mount.");
+        }
+
         var proxyType = typeof(RemoteModuleProxy<>).MakeGenericType(interfaceType);
         var createMethod = proxyType.GetMethod(
             nameof(RemoteModuleProxy<IModule>.Create),
             BindingFlags.Static | BindingFlags.NonPublic)!;
-        return createMethod.Invoke(null, new object[] { remotePath })!;
+        return createMethod.Invoke(null, new object[] { remote.Client, remotePath })!;
     }
 
     // IRemoteMountHook — called by the kernel before local /proc lookup.
