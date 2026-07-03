@@ -1,0 +1,4 @@
+# usb.svc — start the USB demo controller.
+# Convention: the service's primary instance must be named after the service.
+spawn HCore.Packages.Usb.Usb usb
+run usb

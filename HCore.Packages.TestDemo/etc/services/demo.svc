@@ -1,0 +1,11 @@
+# demo.svc — start the TestDemo inter-module-call pair.
+# Module2 (demo) calls Module1, so Module1 must be spawned first.
+#
+# Module2 looks up Module1 at the path in /tmp/module2_target (default
+# /proc/module1). Point it at a remote AFCP mount (e.g. /remote/proc/module1)
+# to make the very same call cross the wire via the Layer 3 MKCall proxy —
+# see docs/afcp/AFCP.md "Layer 3 — remote method calls".
+
+# spawn HCore.Modules.TestDemo.Module1 module1
+# spawn HCore.Packages.TestDemo.Module2 demo
+# run demo

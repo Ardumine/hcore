@@ -14,6 +14,7 @@
     <Target Name="PostBuild" AfterTargets="PostBuildEvent">
         <Exec Command="mkdir -p $(ProjectDir)/../FS/packs/$(AssemblyName)/"/>
         <Exec Command="cp -vr $(OutDir)/* $(ProjectDir)/../FS/packs/$(AssemblyName)/"/>
+        <Exec Command="cp -vr $(ProjectDir)/etc $(ProjectDir)/../FS/" ContinueOnError="true"/>
     </Target>
 
 </Project>
