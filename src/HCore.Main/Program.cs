@@ -14,10 +14,14 @@ internal static class Program
     private static readonly List<ModPack> _existingModPacks = [];
     private static readonly List<LoadedModuleDescriptor> _loadedModuleDescriptors = [];
     private static ConsoleLogyt _kernelLog = null!;
+    private static string _fsRoot = null!;
 
 
-    public static void Main()
+    public static void Main(string[] args)
     {
+        // FS root: --fs <path> arg, or HCORE_FS_ROOT env, or ./FS/ next to executable
+        _fsRoot = ResolveFsRoot(args);
+
         // Create base logger
         _kernelLog = new ConsoleLogyt("HCore");
 
@@ -72,7 +76,7 @@ internal static class Program
 
         // Mount root
         logyt.I("Mounting root...");
-        _vfs.Mount("/", new HostFileSystem("/home/ardumine/hort/hcore/FS"));
+        _vfs.Mount("/", new HostFileSystem(_fsRoot));
         _vfs.Mount("/dev", new DeviceFileSystem());
         _vfs.Mount("/tmp", new MemoryFileSystem("tmpfs"));
 
@@ -87,6 +91,19 @@ internal static class Program
 
     }
 
+
+    private static string ResolveFsRoot(string[] args)
+    {
+        var argValue = args.FirstOrDefault(a => a.StartsWith("--fs="))?[5..];
+        if (!string.IsNullOrEmpty(argValue))
+            return argValue;
+
+        var envValue = Environment.GetEnvironmentVariable("HCORE_FS_ROOT");
+        if (!string.IsNullOrEmpty(envValue))
+            return envValue;
+
+        return Path.GetFullPath("FS"); // ./FS relative to AppContext.BaseDirectory
+    }
 
     private static List<ModPackInfo> ListModPacks(string path = "/packs")
     {

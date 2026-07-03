@@ -3,15 +3,13 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Main", "HCore.Main\HCore.Main.csproj", "{01B780B1-4032-4979-BEAD-D5857F6E2F9A}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Main", "src\HCore.Main\HCore.Main.csproj", "{01B780B1-4032-4979-BEAD-D5857F6E2F9A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Modules.Base", "HCore.Modules.Base\HCore.Modules.Base.csproj", "{3DB02EAC-F61C-46A1-A002-C3F070B2637F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Modules.Base", "src\HCore.Modules.Base\HCore.Modules.Base.csproj", "{3DB02EAC-F61C-46A1-A002-C3F070B2637F}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Packages.HInit", "HCore.Packages.HInit\HCore.Packages.HInit.csproj", "{1E3BF053-6FE1-4F1E-8D43-F69C96115887}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Packages.TestDemo", "HCore.Packages.TestDemo\HCore.Packages.TestDemo.csproj", "{1CB1FC5A-22FA-4562-A162-9B21A2B42637}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Logyt", "Logyt\Logyt.csproj", "{347FA811-14A0-4E90-8681-F595CD8B29AD}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Packages.Usb", "HCore.Packages.Usb\HCore.Packages.Usb.csproj", "{A8796A57-8957-433D-A1EA-11A004AF2C8F}"
 EndProject
@@ -22,6 +20,10 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Packages.Nexus", "HCore.Packages.Nexus\HCore.Packages.Nexus.csproj", "{0C21FE61-4B07-439F-B9E5-B97184BE8F22}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KASerializer", "afcp\kaserializer\src\KASerializer\KASerializer.csproj", "{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HCore.Modules.Robotics", "src\HCore.Modules.Robotics\HCore.Modules.Robotics.csproj", "{CA7E4CA7-871C-4EC9-A756-010BF3C22933}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -81,18 +83,6 @@ Global
 		{1CB1FC5A-22FA-4562-A162-9B21A2B42637}.Release|x64.Build.0 = Release|Any CPU
 		{1CB1FC5A-22FA-4562-A162-9B21A2B42637}.Release|x86.ActiveCfg = Release|Any CPU
 		{1CB1FC5A-22FA-4562-A162-9B21A2B42637}.Release|x86.Build.0 = Release|Any CPU
-		{347FA811-14A0-4E90-8681-F595CD8B29AD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{347FA811-14A0-4E90-8681-F595CD8B29AD}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{347FA811-14A0-4E90-8681-F595CD8B29AD}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{347FA811-14A0-4E90-8681-F595CD8B29AD}.Debug|x64.Build.0 = Debug|Any CPU
-		{347FA811-14A0-4E90-8681-F595CD8B29AD}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{347FA811-14A0-4E90-8681-F595CD8B29AD}.Debug|x86.Build.0 = Debug|Any CPU
-		{347FA811-14A0-4E90-8681-F595CD8B29AD}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{347FA811-14A0-4E90-8681-F595CD8B29AD}.Release|Any CPU.Build.0 = Release|Any CPU
-		{347FA811-14A0-4E90-8681-F595CD8B29AD}.Release|x64.ActiveCfg = Release|Any CPU
-		{347FA811-14A0-4E90-8681-F595CD8B29AD}.Release|x64.Build.0 = Release|Any CPU
-		{347FA811-14A0-4E90-8681-F595CD8B29AD}.Release|x86.ActiveCfg = Release|Any CPU
-		{347FA811-14A0-4E90-8681-F595CD8B29AD}.Release|x86.Build.0 = Release|Any CPU
 		{A8796A57-8957-433D-A1EA-11A004AF2C8F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{A8796A57-8957-433D-A1EA-11A004AF2C8F}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A8796A57-8957-433D-A1EA-11A004AF2C8F}.Debug|x64.ActiveCfg = Debug|Any CPU
@@ -153,8 +143,23 @@ Global
 		{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}.Release|x64.Build.0 = Release|Any CPU
 		{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}.Release|x86.ActiveCfg = Release|Any CPU
 		{9F5F6E34-5FB1-4546-A6F3-4874F1B772E2}.Release|x86.Build.0 = Release|Any CPU
+		{CA7E4CA7-871C-4EC9-A756-010BF3C22933}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CA7E4CA7-871C-4EC9-A756-010BF3C22933}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CA7E4CA7-871C-4EC9-A756-010BF3C22933}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{CA7E4CA7-871C-4EC9-A756-010BF3C22933}.Debug|x64.Build.0 = Debug|Any CPU
+		{CA7E4CA7-871C-4EC9-A756-010BF3C22933}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{CA7E4CA7-871C-4EC9-A756-010BF3C22933}.Debug|x86.Build.0 = Debug|Any CPU
+		{CA7E4CA7-871C-4EC9-A756-010BF3C22933}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CA7E4CA7-871C-4EC9-A756-010BF3C22933}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CA7E4CA7-871C-4EC9-A756-010BF3C22933}.Release|x64.ActiveCfg = Release|Any CPU
+		{CA7E4CA7-871C-4EC9-A756-010BF3C22933}.Release|x64.Build.0 = Release|Any CPU
+		{CA7E4CA7-871C-4EC9-A756-010BF3C22933}.Release|x86.ActiveCfg = Release|Any CPU
+		{CA7E4CA7-871C-4EC9-A756-010BF3C22933}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
+		{CA7E4CA7-871C-4EC9-A756-010BF3C22933} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+	EndGlobalSection
+EndGlobal

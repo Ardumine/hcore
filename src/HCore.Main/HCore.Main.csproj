@@ -10,7 +10,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\HCore.Modules.Base\HCore.Modules.Base.csproj" />
-        <ProjectReference Include="..\Logyt\Logyt.csproj" />
+        <ProjectReference Include="..\HCore.Modules.Robotics\HCore.Modules.Robotics.csproj" />
 
     </ItemGroup>
 

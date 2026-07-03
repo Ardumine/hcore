@@ -4,7 +4,11 @@
 
 ```bash
 dotnet build hcore.sln        # Builds all projects; post-build copies packages to FS/packs/
-dotnet run --project HCore.Main   # Launches the kernel + init (boots /etc/services, then the console shell)
+dotnet run --project src/HCore.Main   # Launches the kernel + init (boots /etc/services, then the console shell)
+
+# Override FS root location:
+dotnet run --project src/HCore.Main -- --fs=/path/to/FS
+HCORE_FS_ROOT=/path/to/FS dotnet run --project src/HCore.Main
 ```
 
 No test framework, no linter, no CI configured.
@@ -61,7 +65,7 @@ that allows packages to contribute commands.
 
 ## Key gotchas
 
-- The VFS host root path is **hardcoded** in `HCore.Main/Program.cs` (`_vfs.Mount("/", new HostFileSystem("/home/ardumine/hort/hcore/FS"))` in `Init()`). This must match the developer's machine.
+- The VFS host root path defaults to `./FS/` relative to the executable. Override via `--fs=<path>` or `HCORE_FS_ROOT` env var.
 - The init module name is **hardcoded** as `"HCore.Packages.HInit.Init"` in `Program.Main()` (the kernel `host.Spawn<IRunnable>("HCore.Packages.HInit.Init", "init")` then `.Run()`s it, so init appears at `/proc/init`).
 - Each package directory needs a manually-created `mpd` file (plain text: DLL name on line 1, optional PDB on line 2).
 - `CopyLocalLockFileAssemblies` must be `true` in package `.csproj` files so NuGet deps land next to the DLL.

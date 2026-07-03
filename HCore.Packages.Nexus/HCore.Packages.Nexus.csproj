@@ -11,7 +11,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\HCore.Modules.Base\HCore.Modules.Base.csproj" />
+        <ProjectReference Include="..\src\HCore.Modules.Base\HCore.Modules.Base.csproj" />
         <ProjectReference Include="..\afcp\kaserializer\src\KASerializer\KASerializer.csproj" />
     </ItemGroup>
 
