@@ -4,17 +4,19 @@ This guide walks you through creating a new HCore package as a **standalone repo
 
 ## Overview
 
-A package repo lives **alongside** the kernel repo and references it by a peer relative path:
+A package is its **own repo** and consumes the kernel ABI, `HCore.Modules.Base`, as a **git submodule** ([`ardumine/hcore-modules-base`](https://github.com/Ardumine/hcore-modules-base)). You do **not** need to clone the whole kernel to build a package:
 
 ```
-ardumine/
-  hcore/       ← kernel (cloned)
-  mypackage/   ← your package (created here)
+mypackage/                 ← your package repo
+  HCore.Modules.Base/      ← git submodule (the ABI, pinned to a tag)
+  HCore.Packages.MyPackage/← your class library
 ```
+
+> **Pin to a tag.** The ABI's type identity must match the kernel that will load your package. Add the submodule and check out a released tag (e.g. `v1.0.0`) rather than tracking `main`, so your build matches a known kernel.
 
 Each package needs:
 
-1. A **.NET 10 class library** referencing `HCore.Modules.Base` (and optionally `HCore.Modules.Robotics`)
+1. A **.NET 10 class library** referencing the `HCore.Modules.Base` submodule (and optionally `HCore.Modules.Robotics`, still shipped in the kernel repo)
 2. One or more **module triples** (interface + implement + descriptor)
 3. An **`mpd`** file in your package directory
 4. A **`manifest.json`** for package metadata
@@ -27,8 +29,15 @@ Each package needs:
 ```bash
 git init mypackage
 cd mypackage
+
+# Add the ABI as a submodule and pin it to a released tag:
+git submodule add https://github.com/Ardumine/hcore-modules-base.git HCore.Modules.Base
+git -C HCore.Modules.Base checkout v1.0.0
+
 dotnet new classlib -n HCore.Packages.MyPackage --framework net10.0
 ```
+
+Consumers of your repo clone with `git clone --recurse-submodules` (or run `git submodule update --init` after cloning) to fetch the ABI.
 
 ### 2. Set up the .csproj
 
@@ -44,9 +53,10 @@ dotnet new classlib -n HCore.Packages.MyPackage --framework net10.0
     </PropertyGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\hcore\src\HCore.Modules.Base\HCore.Modules.Base.csproj" />
-        <!-- If your types cross ALC boundaries, also reference Robotics: -->
-        <!-- <ProjectReference Include="..\hcore\src\HCore.Modules.Robotics\HCore.Modules.Robotics.csproj" /> -->
+        <ProjectReference Include="..\HCore.Modules.Base\HCore.Modules.Base.csproj" />
+        <!-- If your types cross ALC boundaries, also reference Robotics
+             (still in the kernel repo — clone hcore/ alongside for now): -->
+        <!-- <ProjectReference Include="..\..\hcore\src\HCore.Modules.Robotics\HCore.Modules.Robotics.csproj" /> -->
     </ItemGroup>
 
     <ItemGroup>
@@ -67,8 +77,8 @@ dotnet new classlib -n HCore.Packages.MyPackage --framework net10.0
 Key points:
 - `AssemblyName` must be the package identity (matches `manifest.json` `name`)
 - `CopyLocalLockFileAssemblies` ensures NuGet dependencies are copied
-- The `ProjectReference` path uses `..\hcore\src\` (peer repo layout)
-- `PostBuild` deploys to `../hcore/FS/packs/<AssemblyName>/`
+- The `ProjectReference` points at the `HCore.Modules.Base` submodule in your repo
+- `PostBuild` deploys to a kernel's `FS/packs/<AssemblyName>/` for local testing (clone `hcore/` alongside to run it)
 
 ### 3. Define the Module Interface
 
@@ -244,7 +254,7 @@ shell.RegisterCommand(new MyCommand());
 ## Checklist
 
 - [ ] Project targets `net10.0`, `AssemblyName` matches package identity
-- [ ] References `..\hcore\src\HCore.Modules.Base\...` (peer relative path)
+- [ ] References the `HCore.Modules.Base` submodule, pinned to a released tag
 - [ ] `CopyLocalLockFileAssemblies` is `true`
 - [ ] PostBuild deploys to `../hcore/FS/packs/$(AssemblyName)/`
 - [ ] Interface extends `IModule` (or `IRunnable`)

@@ -1,0 +1,41 @@
+name: base-fs
+
+# Assemble the HCore base filesystem (rootfs) from the essential packages'
+# .hpk releases and publish it as hcore-base-fs.tar.gz. The kernel repo ships
+# no FS; this artifact is what a user extracts next to the downloaded `hcore`
+# binary and runs with `hcore --fs ./FS`.
+#
+# Trigger: manually, or automatically when a kernel release is published.
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Assemble base FS
+        run: scripts/build-base-fs.sh -o hcore-base-fs.tar.gz
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcore-base-fs
+          path: hcore-base-fs.tar.gz
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: hcore-base-fs.tar.gz

@@ -4,3 +4,6 @@
 [submodule "afcp/kaserializer"]
 	path = afcp/kaserializer
 	url = https://github.com/Ardumine/kaserializer
+[submodule "src/HCore.Modules.Base"]
+	path = src/HCore.Modules.Base
+	url = https://github.com/Ardumine/hcore-modules-base.git

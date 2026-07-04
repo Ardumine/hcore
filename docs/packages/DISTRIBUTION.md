@@ -6,7 +6,7 @@ How HCore packages are built, distributed, installed, and bootstrapped.
 
 ## Architecture
 
-HCore is a microkernel with dynamically loaded packages. The kernel repo (`hcore/`) contains:
+HCore is a microkernel with dynamically loaded packages. The kernel repo (`hcore/`) contains **only the kernel + shared contracts — no filesystem** (the `hcore` binary is portable, like `vmlinuz`; it ships no rootfs):
 
 ```
 hcore/
@@ -14,8 +14,10 @@ hcore/
     HCore.Main/             ← kernel
     HCore.Modules.Base/     ← shared kernel contracts
     HCore.Modules.Robotics/ ← shared domain contracts
-  FS/                       ← runtime filesystem root (generated, not source)
+  scripts/build-base-fs.sh  ← assembles the base FS release artifact
 ```
+
+The runtime FS root (`./FS/`) is **generated, never committed** (`.gitignore` excludes all of `/FS/`). A ready-made base FS is shipped as a *separate* release artifact (`hcore-base-fs.tar.gz`) — see [Base FS Artifact](#base-fs-artifact) below.
 
 Packages live in **separate repos** cloned alongside:
 
@@ -56,17 +58,52 @@ Kernel boots
 
 On subsequent boots (packages already present), bootstrap is skipped.
 
-The list of essential packages lives in `src/HCore.Main/Bootstrap/bootstrap.json`:
+The list of essential packages lives in `src/HCore.Main/Bootstrap/bootstrap.json`. It is the **single source of truth** for what a base system needs — consumed by both the in-kernel network self-heal *and* the base-FS assembler script:
 
 ```json
 {
   "essential": [
-    { "name": "HCore.Packages.HInit",  "version": "1.0.0" },
-    { "name": "HCore.Packages.HShell", "version": "1.0.0" },
-    { "name": "HCore.Packages.Hpm",    "version": "1.0.0" }
+    { "name": "HCore.Packages.HInit",  "version": "1.0.0",
+      "url": "https://github.com/Ardumine/hinit/releases/download/v1.0.0/HCore.Packages.HInit-1.0.0.hpk" },
+    { "name": "HCore.Packages.HShell", "version": "1.0.0",
+      "url": "https://github.com/Ardumine/hshell/releases/download/v1.0.0/HCore.Packages.HShell-1.0.0.hpk" }
   ]
 }
 ```
+
+Each entry may also carry a `"sha256"` to pin the download.
+
+---
+
+## Base FS Artifact
+
+Since the kernel ships no filesystem, a ready-to-run base FS is built and released
+separately as **`hcore-base-fs.tar.gz`**. A fresh user grabs two files from Releases:
+
+```bash
+curl -fsSL -O https://github.com/Ardumine/hcore/releases/download/v1.0.0/hcore-linux-x64
+curl -fsSL https://github.com/Ardumine/hcore/releases/download/v1.0.0/hcore-base-fs.tar.gz | tar -xz
+chmod +x hcore-linux-x64
+./hcore-linux-x64 --fs ./FS
+```
+
+### How the base FS is generated
+
+`scripts/build-base-fs.sh` is a deterministic **assembler**: it reads `bootstrap.json`,
+downloads each essential package's `.hpk` release, and unpacks it into a staging FS
+(mirroring the kernel's `HpkArchive.Extract`: root/`lib/` files → `FS/packs/<name>/`,
+`etc/` overlay → `FS/etc/`), then tars the result.
+
+```bash
+# CI / release (downloads .hpk from the URLs in bootstrap.json):
+scripts/build-base-fs.sh -o hcore-base-fs.tar.gz
+
+# Offline / dev (use locally-built .hpk files named <PackageName>-<version>.hpk):
+HPK_DIR=./dist scripts/build-base-fs.sh -o hcore-base-fs.tar.gz
+```
+
+The `.github/workflows/base-fs.yml` workflow runs this on every published release
+(and on manual dispatch) and attaches `hcore-base-fs.tar.gz` to the release.
 
 ---
 
@@ -119,12 +156,12 @@ Extracts `src/` from the installed package, runs `manifest.json`'s `source.build
 
 ## Day-to-Day Development
 
-1. **Clone kernel + desired packages:**
+1. **Clone kernel + desired packages** (`--recurse-submodules` fetches the `HCore.Modules.Base` ABI, now a submodule):
    ```bash
-   git clone https://github.com/Ardumine/hcore.git
-   git clone https://github.com/Ardumine/hinit.git
-   git clone https://github.com/Ardumine/hshell.git
-   git clone https://github.com/Ardumine/hpm.git
+   git clone --recurse-submodules https://github.com/Ardumine/hcore.git
+   git clone --recurse-submodules https://github.com/Ardumine/hinit.git
+   git clone --recurse-submodules https://github.com/Ardumine/hshell.git
+   git clone --recurse-submodules https://github.com/Ardumine/hpm.git
    ```
 
 2. **Build a package:**

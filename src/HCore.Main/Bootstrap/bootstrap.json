@@ -2,23 +2,33 @@
   "essential": [
     {
       "name": "HCore.Packages.HInit",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "url": "https://github.com/Ardumine/hinit/releases/download/v1.0.0/HCore.Packages.HInit-1.0.0.hpk",
+      "sha256": null
     },
     {
       "name": "HCore.Packages.HShell",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "url": "https://github.com/Ardumine/hshell/releases/download/v1.0.0/HCore.Packages.HShell-1.0.0.hpk",
+      "sha256": null
     },
     {
       "name": "HCore.Packages.Hpm",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "url": "https://github.com/Ardumine/hpm/releases/download/v1.0.0/HCore.Packages.Hpm-1.0.0.hpk",
+      "sha256": null
     },
     {
       "name": "HCore.Packages.HShellUtils",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "url": "https://github.com/Ardumine/hshellutils/releases/download/v1.0.0/HCore.Packages.HShellUtils-1.0.0.hpk",
+      "sha256": null
     },
     {
       "name": "HCore.Packages.HShellNetUtils",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "url": "https://github.com/Ardumine/hshellnetutils/releases/download/v1.0.0/HCore.Packages.HShellNetUtils-1.0.0.hpk",
+      "sha256": null
     }
   ]
 }
