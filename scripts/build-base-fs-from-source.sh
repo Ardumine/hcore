@@ -74,7 +74,7 @@ build_pkg() {
   fi
 
   info "$repo: building"
-  dotnet build "$src" -c Release -o "$out" -v quiet --nologo >/dev/null
+  dotnet build "$src" -c Release -o "$out" 
 
   # The pack directory name is the assembly name = line 1 of mpd minus .dll.
   [ -f "$src/mpd" ] || die "$repo: no mpd file"
@@ -97,7 +97,7 @@ done
 
 if [ "$WITH_KERNEL" -eq 1 ]; then
   info "building kernel (HCore.Main)"
-  dotnet build "$REPO_ROOT/HCore.Main/HCore.Main.csproj" -c Release -v quiet --nologo >/dev/null
+  dotnet build "$REPO_ROOT/HCore.Main/HCore.Main.csproj" -c Release
 fi
 
 info "base FS assembled at: $FS_DIR"
