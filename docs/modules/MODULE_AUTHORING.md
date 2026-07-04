@@ -18,7 +18,7 @@ mypackage/                       ← your package repo (project at the root)
 
 Each package needs:
 
-1. A **.NET 10 class library** referencing the `HCore.Modules.Base` submodule (and optionally `HCore.Modules.Robotics`, still shipped in the kernel repo)
+1. A **.NET 10 class library** referencing the `HCore.Modules.Base` submodule (and, if you need shared domain contracts like `ILidar`, the `hrobotics` submodule — which bundles Base)
 2. One or more **module triples** (interface + implement + descriptor)
 3. An **`mpd`** file in your package directory
 4. A **`manifest.json`** for package metadata
@@ -57,9 +57,11 @@ Consumers of your repo clone with `git clone --recurse-submodules` (or run `git 
 
     <ItemGroup>
         <ProjectReference Include="HCore.Modules.Base\HCore.Modules.Base.csproj" />
-        <!-- If your types cross ALC boundaries, also reference Robotics
-             (still in the kernel repo — clone hcore/ alongside for now): -->
-        <!-- <ProjectReference Include="..\hcore\src\HCore.Modules.Robotics\HCore.Modules.Robotics.csproj" /> -->
+        <!-- If your types cross ALC boundaries (e.g. ILidar), use the hrobotics
+             submodule instead — it bundles Base, so reference BOTH through it and
+             drop the direct Base reference above (one Base in the build graph):
+        <ProjectReference Include="HCore.Modules.Robotics\HCore.Modules.Base\HCore.Modules.Base.csproj" />
+        <ProjectReference Include="HCore.Modules.Robotics\HCore.Modules.Robotics.csproj" /> -->
     </ItemGroup>
 
     <!-- The Base submodule lives under this project dir, so its sources would be
@@ -192,25 +194,43 @@ cd mypackage
 dotnet build                          # builds + deploys to hcore/FS/packs/
 
 cd ../hcore
-dotnet run --project src/HCore.Main   # starts kernel, discovers your package
+dotnet run --project HCore.Main   # starts kernel, discovers your package
 ```
 
 ---
 
 ## Shared Types (Cross-ALC)
 
-For a type to be used across package boundaries, it must live in an assembly loaded in the `Default` ALC context. Two options:
+For a type to be shared across package boundaries it must have a single identity in the
+`Default` ALC context. The kernel's **shared-contract loader** guarantees this
+automatically: any assembly named `HCore.Modules.*` that a package loads is promoted into
+the `Default` context on first load, so every package sees the same `Type`. Two such
+contracts exist today:
 
-| Assembly | For |
-|----------|-----|
-| `HCore.Modules.Base` | Kernel contracts: `IModule`, `IRunnable`, `ICommand`, `IModuleHost`, `IShell`, ... |
-| `HCore.Modules.Robotics` | Domain contracts: `ILidar`, and future: `ISlam`, `IUsbDevice`, `ScanFrame`, ... |
+| Assembly | Repo | For |
+|----------|------|-----|
+| `HCore.Modules.Base` | `hcore-modules-base` | Kernel contracts: `IModule`, `IRunnable`, `ICommand`, `IModuleHost`, `IShell`, ... |
+| `HCore.Modules.Robotics` | `hrobotics` (bundles Base) | Domain contracts: `ILidar`, and future: `ISlam`, `IUsbDevice`, `ScanFrame`, ... |
 
-Example: `ILidar` lives in `Robotics` so both Sensor (producer) and Nexus (consumer) share the same type identity:
+Example: `ILidar` lives in `Robotics` so both Sensor (producer) and Nexus (consumer) share
+one type identity. Add the `hrobotics` submodule (it bundles Base) and reference **both**
+contracts through it — do not also add a separate Base submodule, or you get two Base
+projects in the graph:
+
+```bash
+git submodule add https://github.com/Ardumine/hrobotics.git HCore.Modules.Robotics
+git -C HCore.Modules.Robotics checkout v1.0.0
+git submodule update --init --recursive   # fetch hrobotics' nested Base
+```
 
 ```xml
 <!-- In your package's .csproj -->
-<ProjectReference Include="..\hcore\src\HCore.Modules.Robotics\HCore.Modules.Robotics.csproj" />
+<ProjectReference Include="HCore.Modules.Robotics\HCore.Modules.Base\HCore.Modules.Base.csproj" />
+<ProjectReference Include="HCore.Modules.Robotics\HCore.Modules.Robotics.csproj" />
+<ItemGroup>
+    <Compile Remove="HCore.Modules.Robotics\**\*.cs" />
+    <None Remove="HCore.Modules.Robotics\**" />
+</ItemGroup>
 ```
 
 ```csharp

@@ -1,3 +1,0 @@
-# sensor.svc — start the lidar demo producer for AFCP testing.
-spawn HCore.Packages.Sensor.Lidar lidar
-run lidar

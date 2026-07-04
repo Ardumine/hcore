@@ -149,9 +149,9 @@ ardumine/
   husb/           ← HCore.Packages.Usb
 ```
 
-Each package repo references the kernel via a peer relative path:
+Each package consumes the ABI as a git submodule (see [MODULE_AUTHORING](../modules/MODULE_AUTHORING.md)):
 ```xml
-<ProjectReference Include="..\hcore\src\HCore.Modules.Base\HCore.Modules.Base.csproj" />
+<ProjectReference Include="HCore.Modules.Base\HCore.Modules.Base.csproj" />
 ```
 
 PostBuild deploys to the kernel's `FS/packs/`:
@@ -170,9 +170,10 @@ HCore.Modules.Base      → kernel contracts (IModule, IRunnable, ICommand, IMod
 HCore.Modules.Robotics  → domain contracts (ILidar, future: IUsbDevice, ISlam, ...)
 ```
 
-Packages that need Robotics types add a reference:
+Packages that need Robotics types add the `hrobotics` submodule (which bundles Base) and reference both through it:
 ```xml
-<ProjectReference Include="..\hcore\src\HCore.Modules.Robotics\HCore.Modules.Robotics.csproj" />
+<ProjectReference Include="HCore.Modules.Robotics\HCore.Modules.Base\HCore.Modules.Base.csproj" />
+<ProjectReference Include="HCore.Modules.Robotics\HCore.Modules.Robotics.csproj" />
 ```
 
 ---
@@ -187,10 +188,10 @@ mkdir mypkg && cd mypkg
 dotnet new classlib -n HCore.Packages.MyPkg --framework net10.0
 
 # Reference kernel modules
-# .csproj: <ProjectReference Include="..\hcore\src\HCore.Modules.Base\..." />
+# .csproj: <ProjectReference Include="HCore.Modules.Base\..." />
 
 # Create the module triple (interface + implement + descriptor)
 # Create manifest.json, mpd, etc/services/*.svc
 # Build: dotnet build  (PostBuild copies to ../hcore/FS/packs/)
-# Run: cd ../hcore && dotnet run --project src/HCore.Main
+# Run: cd ../hcore && dotnet run --project HCore.Main
 ```
