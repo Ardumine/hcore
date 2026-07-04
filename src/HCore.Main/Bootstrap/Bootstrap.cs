@@ -121,10 +121,12 @@ internal sealed class Bootstrap : IBootstrap
         // Map package name to peer repo directory name
         var repoName = pkg.Name switch
         {
-            "HCore.Packages.HInit"  => "hinit",
-            "HCore.Packages.HShell" => "hshell",
-            "HCore.Packages.Hpm"    => "hpm",
-            _                       => null
+            "HCore.Packages.HInit"       => "hinit",
+            "HCore.Packages.HShell"      => "hshell",
+            "HCore.Packages.Hpm"         => "hpm",
+            "HCore.Packages.HShellUtils"  => "hshellutils",
+            "HCore.Packages.HShellNetUtils" => "hshellnetutils",
+            _                            => null
         };
 
         if (repoName is null)

@@ -11,6 +11,14 @@
     {
       "name": "HCore.Packages.Hpm",
       "version": "1.0.0"
+    },
+    {
+      "name": "HCore.Packages.HShellUtils",
+      "version": "1.0.0"
+    },
+    {
+      "name": "HCore.Packages.HShellNetUtils",
+      "version": "1.0.0"
     }
   ]
 }
