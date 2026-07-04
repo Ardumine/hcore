@@ -47,7 +47,7 @@ while [ $# -gt 0 ]; do
     -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
-done
+donedotnet build
 
 command -v dotnet >/dev/null 2>&1 || die "dotnet (.NET 10 SDK) is required"
 command -v git    >/dev/null 2>&1 || die "git is required"
