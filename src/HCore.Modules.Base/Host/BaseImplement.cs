@@ -123,7 +123,9 @@ internal sealed class EmptyModuleFileSystem : IModuleFileSystem
 
 	public bool Exists(string path) => throw new InvalidOperationException("Module VFS is not attached.");
 
-	public bool Move(string sourcePath, string destinationPath, bool overwrite = false) => throw new InvalidOperationException("Module VFS is not attached.");
+    public bool Copy(string sourcePath, string destinationPath, bool overwrite = false) => throw new InvalidOperationException("Module VFS is not attached.");
+
+    public bool Move(string sourcePath, string destinationPath, bool overwrite = false) => throw new InvalidOperationException("Module VFS is not attached.");
 
 	public bool Rename(string path, string newName, bool overwrite = false) => throw new InvalidOperationException("Module VFS is not attached.");
 }

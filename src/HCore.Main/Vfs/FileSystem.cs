@@ -173,6 +173,76 @@ public sealed class FileSystem : IVfsKernel, IKernelVfs
         return parent.TryGet(segments[^1]) is not null;
     }
 
+    public bool Copy(string sourcePath, string destinationPath, bool overwrite = false, string workingDirectory = "/")
+    {
+        var sourceAbsolute = PathHelpers.NormalizeAbsolute(sourcePath, workingDirectory);
+        var destinationAbsolute = PathHelpers.NormalizeAbsolute(destinationPath, workingDirectory);
+
+        if (string.Equals(sourceAbsolute, destinationAbsolute, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var (sourceMount, _, sourceSegments) = Resolve(sourceAbsolute, "/");
+        var (destinationMount, _, destinationSegments) = Resolve(destinationAbsolute, "/");
+
+        if (destinationMount.FileSystem.IsReadOnly)
+            throw new InvalidOperationException($"Filesystem '{destinationMount.FileSystem.Name}' is read-only.");
+
+        if (sourceSegments.Length == 0)
+            throw new InvalidOperationException("Cannot copy a mount root.");
+
+        if (destinationSegments.Length == 0)
+        {
+            var leafName = sourceSegments[^1];
+            var newDest = destinationAbsolute == "/" ? $"/{leafName}" : $"{destinationAbsolute}/{leafName}";
+            return Copy(sourcePath, newDest, overwrite, "/");
+        }
+
+        if (ReferenceEquals(sourceMount, destinationMount) && IsPathInside(destinationAbsolute, sourceAbsolute))
+            throw new IOException("Cannot copy a directory into itself.");
+
+        var sourceParentSegments = sourceSegments.Length == 1 ? Array.Empty<string>() : sourceSegments[..^1];
+        var sourceParent = FindDirectory(sourceMount, sourceParentSegments);
+        if (sourceParent is null)
+            return false;
+
+        var sourceName = sourceSegments[^1];
+        var sourceNode = sourceParent.TryGet(sourceName);
+        if (sourceNode is null)
+            return false;
+
+        var destinationParentSegments = destinationSegments.Length == 1 ? Array.Empty<string>() : destinationSegments[..^1];
+        var destinationParent = EnsureDirectory(destinationMount, destinationParentSegments);
+
+        var destinationName = destinationSegments[^1];
+        var destinationNode = destinationParent.TryGet(destinationName);
+
+        if (destinationNode is not null)
+        {
+            if (!overwrite)
+                return false;
+
+            if (destinationNode is IVirtualDirectory destinationDirectory && destinationDirectory.Enumerate().Any())
+                throw new IOException($"Destination directory '{destinationAbsolute}' is not empty.");
+
+            destinationParent.TryDelete(destinationName);
+        }
+
+        switch (sourceNode)
+        {
+            case IVirtualFile sourceFile:
+                destinationParent.CreateFile(destinationName, overwrite: true, sourceFile.ReadAllBytes());
+                break;
+            case IVirtualDirectory sourceDirectory:
+                var copiedDirectory = destinationParent.CreateDirectory(destinationName);
+                CopyDirectoryRecursive(sourceDirectory, copiedDirectory);
+                break;
+            default:
+                throw new IOException("Unsupported node type.");
+        }
+
+        return true;
+    }
+
     public bool Move(string sourcePath, string destinationPath, bool overwrite = false, string workingDirectory = "/")
     {
         var sourceAbsolute = PathHelpers.NormalizeAbsolute(sourcePath, workingDirectory);

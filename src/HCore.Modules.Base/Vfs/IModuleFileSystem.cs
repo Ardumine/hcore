@@ -13,6 +13,7 @@ public interface IModuleFileSystem
     bool DeleteFile(string path);
     bool DeleteDirectory(string path, bool recursive = false);
     bool Exists(string path);
+    bool Copy(string sourcePath, string destinationPath, bool overwrite = false);
     bool Move(string sourcePath, string destinationPath, bool overwrite = false);
     bool Rename(string path, string newName, bool overwrite = false);
     bool FileExists(string path);

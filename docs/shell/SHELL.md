@@ -31,6 +31,7 @@ The shell dispatches through an `ICommand` registry (one class per command). Bui
 | `mkdir <dir>` | Create a directory |
 | `rm <file>` | Remove a file |
 | `rmdir <dir>` | Remove an empty directory |
+| `cp <src> <dst> [-f]` | Copy a file or directory (cross-mount); use `-f` to overwrite |
 | `touch <file>` | Create an empty file if missing |
 | `exists <path>` | Print `true` / `false` |
 | `mv <src> <dst>` | Move a file or directory |
@@ -83,7 +84,7 @@ run usb
 | `/dev` | Synthetic device files (read-only) |
 | `/tmp` | In-memory scratch (lost on exit) |
 | `/proc` | Live view of running module instances + their data facets (read-only) |
-| `/<mountpoint>` (e.g. `/other`) | A remote peer's entire root (not just `/proc`), mounted via `afcp mount` (read-write — `mkdir`/`write`/`rm`/`mv`/etc. all work across the mount) |
+| `|<mountpoint>` (e.g. `/other\`) | A remote peer's entire root (not just `/proc`), mounted via `afcp mount` (read-write — `ls`/`cat`/`mkdir`/`write`/`rm`/`cp`/`mv`/etc. all work across the mount) |
 
 After boot, `/proc` shows init's children plus the booted services, e.g.:
 
@@ -120,7 +121,7 @@ usb: Stopped
 
 ## AFCP — remote data plane
 
-The `afcp` command drives the kernel-space AFCP bridge, exposing the local root (`/proc`, `/etc`, `/dev`, `/packs`, ...) over TCP and mounting remote peers' trees as read-write VFS mounts (9P-style: remoteness is a path prefix). Both sides use ordinary VFS commands — `ls`/`cat`/`mkdir`/`write`/`rm`/`mv`/etc. all work across a mount, no AFCP-specific verbs. It reaches the bridge through the shared `IAfcpKernel` interface (a `GetModuleInterface<IAfcpKernel>("@afcp")` lookup), so the shell package has no AFCP reference. There is no capability model yet — a mounting peer can write anywhere under the served root. Full design and the standalone `AFCP/` protocol library are documented in [AFCP.md](../afcp/AFCP.md).
+The `afcp` command drives the kernel-space AFCP bridge, exposing the local root (`/proc`, `/etc`, `/dev`, `/packs`, ...) over TCP and mounting remote peers' trees as read-write VFS mounts (9P-style: remoteness is a path prefix). Both sides use ordinary VFS commands — `ls`/`cat`/`mkdir`/`write`/`rm`/`cp`/`mv`/etc. all work across a mount, no AFCP-specific verbs. It reaches the bridge through the shared `IAfcpKernel` interface (a `GetModuleInterface<IAfcpKernel>("@afcp")` lookup), so the shell package has no AFCP reference. There is no capability model yet — a mounting peer can write anywhere under the served root. Full design and the standalone `AFCP/` protocol library are documented in [AFCP.md](../afcp/AFCP.md).
 
 ```
 / $ service start sensor        # start the lidar demo (exposes /proc/lidar/scan_data)

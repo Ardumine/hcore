@@ -102,6 +102,14 @@ public sealed class ModuleFileSystemProxy : IModuleFileSystem
         }
     }
 
+    public bool Copy(string sourcePath, string destinationPath, bool overwrite = false)
+    {
+        lock (_sync)
+        {
+            return _fileSystem.Copy(sourcePath, destinationPath, overwrite, WorkingDirectory);
+        }
+    }
+
     public bool Move(string sourcePath, string destinationPath, bool overwrite = false)
     {
         lock (_sync)

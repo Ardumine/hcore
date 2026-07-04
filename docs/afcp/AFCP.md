@@ -132,6 +132,14 @@ primitives (same-mount only — a pre-existing constraint, unrelated to AFCP).
 That composition costs one round-trip per file instead of a single
 server-side rename, accepted for this trusted-LAN first cut.
 
+Similarly, there is no dedicated `Copy` verb. The kernel's
+`FileSystem.Copy` uses the same composition (`Read`+`Write`+`MkDir`) and
+supports **cross-mount** copy (unlike `Move`). Copying a file from a remote
+mount to a local mount (or vice versa) works transparently: the kernel reads
+from the source mount's backing filesystem and writes to the destination
+mount's. For a recursive directory copy over a remote mount this costs O(N)
+round-trips per file/dir — accepted for this trusted-LAN first cut.
+
 > **Gotcha (fixed):** the serializer's unmanaged-array fast path (used for
 > `byte[]`) used to throw `IndexOutOfRangeException` on a zero-length array —
 > `Ldelema` unconditionally took the address of element 0 even when the array

@@ -23,7 +23,8 @@ and verified** via the `afcp test` loopback self-test (see [AFCP.md](afcp/AFCP.m
 VFS writes (Write/MkDir/Remove) — is implemented and verified**, same self-test plus a manual
 loopback shell check (`mkdir`/`write`/`append`/`cat`/`mv`/`touch`/`rm`/`rmdir` through a mounted
 peer). Move/rename works over a remote mount by composing the existing `Write`+`MkDir`+`Remove`
-primitives — no dedicated wire message (see §C7a below). Fixed a latent bug surfaced by this work:
+primitives — no dedicated wire message (see §C7a below). **`FileSystem.Copy` + `cp` shell command
+implemented** (cross-mount, reuses the same composition primitives). Fixed a latent bug surfaced by this work:
 the AFCP serializer's unmanaged-array fast path threw `IndexOutOfRangeException` serializing a
 zero-length array (e.g. an empty file's `byte[]`) — `Ldelema` on element 0 of an empty array always
 bounds-checks even though the body write is skipped for zero length; fixed in
@@ -172,7 +173,9 @@ Design work remains; these are additive layers on top of §A, not blockers for t
       `ReadAllBytes` against the generic VFS primitives (same-mount only, a pre-existing
       constraint), so `mv`/`rename` over a remote mount works for free once
       `Write`/`MkDir`/`Remove` are wired — at the cost of N round-trips per file instead
-      of one, acceptable for a trusted-LAN first cut. `Remove` maps 1:1 onto
+      of one, acceptable for a trusted-LAN first cut. `FileSystem.Copy` (+ `cp` shell
+      command) works the same way via `Read`+`Write`+`MkDir` decomposition and supports
+      **cross-mount** copy (unlike `Move`, which is same-mount only). `Remove` maps 1:1 onto
       `IVirtualDirectory.TryDelete` (single node, refuses a non-empty directory, no
       recursion — matches local `HostDirectory` semantics). No typed errors (`Success`
       bool + `Error` string, same minimalism as `Read`/`Sync`) — that's C7d. No capability
