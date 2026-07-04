@@ -115,9 +115,20 @@ internal static class Program
 
     private static string ResolveFsRoot(string[] args)
     {
-        var argValue = args.FirstOrDefault(a => a.StartsWith("--fs="))?[5..];
-        if (!string.IsNullOrEmpty(argValue))
-            return argValue;
+        // Accept both "--fs=<path>" and "--fs <path>" (space-separated).
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (args[i].StartsWith("--fs=", StringComparison.Ordinal))
+            {
+                var inlineValue = args[i][5..];
+                if (!string.IsNullOrEmpty(inlineValue))
+                    return inlineValue;
+            }
+            else if (args[i] == "--fs" && i + 1 < args.Length && !string.IsNullOrEmpty(args[i + 1]))
+            {
+                return args[i + 1];
+            }
+        }
 
         var envValue = Environment.GetEnvironmentVariable("HCORE_FS_ROOT");
         if (!string.IsNullOrEmpty(envValue))
