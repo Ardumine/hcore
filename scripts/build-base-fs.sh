@@ -2,6 +2,12 @@
 #
 # build-base-fs.sh — assemble the HCore base filesystem release artifact.
 #
+# NOTE: this variant assembles the FS from published .hpk RELEASE assets, which
+# do not exist yet, and its package list (bootstrap.json essentials) does NOT
+# include Nexus — which the kernel currently spawns at boot. Until packages
+# publish .hpk releases (and Nexus is added), use the from-source builder:
+#     scripts/build-base-fs-from-source.sh
+#
 # The kernel repo ships NO filesystem. This script materialises a base FS
 # (rootfs) from the essential packages listed in the kernel's bootstrap.json,
 # downloading each package's .hpk release and unpacking it with the same
