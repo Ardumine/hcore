@@ -96,8 +96,45 @@ internal sealed class VfsAfcpProvider : IAfcpProvider
     {
         try
         {
-            var bytes = _vfs.GetFile(request.Path).ReadAllBytes();
-            return new ReadResponse { Data = bytes, Exists = true };
+            var file = _vfs.GetFile(request.Path);
+
+            // MaxLength <= 0 is the one-shot whole-file read (back-compat).
+            if (request.MaxLength <= 0)
+            {
+                var all = file.ReadAllBytes();
+                return new ReadResponse { Data = all, Exists = true, TotalLength = all.LongLength, Eof = true };
+            }
+
+            // Chunked read (§C7e): serve one window [Offset, Offset+MaxLength).
+            using var stream = file.GetStream(FileMode.Open, FileAccess.Read);
+            if (!stream.CanSeek)
+            {
+                // Fallback for a non-seekable backing stream: materialize + slice.
+                // Fine for the small synthetic files this applies to (facets/devices).
+                var all = ReadStreamToEnd(stream);
+                var start = (int)Math.Clamp(request.Offset, 0, all.Length);
+                var take = (int)Math.Min(request.MaxLength, all.Length - start);
+                var slice = new byte[take];
+                Array.Copy(all, start, slice, 0, take);
+                return new ReadResponse { Data = slice, Exists = true, TotalLength = all.Length, Eof = start + take >= all.Length };
+            }
+
+            var total = stream.Length;
+            var offset = Math.Clamp(request.Offset, 0, total);
+            if (offset > 0) stream.Seek(offset, SeekOrigin.Begin);
+
+            var toRead = (int)Math.Min(request.MaxLength, total - offset);
+            var buffer = new byte[toRead];
+            var read = ReadUpTo(stream, buffer);
+            if (read != buffer.Length) buffer = buffer[..read];
+
+            return new ReadResponse
+            {
+                Data = buffer,
+                Exists = true,
+                TotalLength = total,
+                Eof = offset + read >= total,
+            };
         }
         catch (Exception ex)
         {
@@ -106,6 +143,26 @@ internal sealed class VfsAfcpProvider : IAfcpProvider
             var (code, message) = ClassifyFileError(ex, request.Path);
             return new ReadResponse { Data = null, Exists = false, Error = code, ErrorMessage = message };
         }
+    }
+
+    /// <summary>Read up to <paramref name="buffer"/>.Length bytes, tolerating short reads (returns bytes actually read).</summary>
+    private static int ReadUpTo(Stream stream, byte[] buffer)
+    {
+        var total = 0;
+        while (total < buffer.Length)
+        {
+            var n = stream.Read(buffer, total, buffer.Length - total);
+            if (n <= 0) break;
+            total += n;
+        }
+        return total;
+    }
+
+    private static byte[] ReadStreamToEnd(Stream stream)
+    {
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        return ms.ToArray();
     }
 
     /// <summary>
@@ -157,7 +214,22 @@ internal sealed class VfsAfcpProvider : IAfcpProvider
     {
         try
         {
-            _vfs.CreateFile(request.Path, request.Data ?? Array.Empty<byte>(), request.Overwrite);
+            var data = request.Data ?? Array.Empty<byte>();
+
+            if (request.Offset <= 0)
+            {
+                // First (or only) chunk: create/overwrite from the start.
+                _vfs.CreateFile(request.Path, data, request.Overwrite);
+            }
+            else
+            {
+                // Continuation chunk (§C7e): seek + write into the file created by
+                // the first chunk. HostFile/MemoryFile both persist a seek+write.
+                using var stream = _vfs.GetFile(request.Path).GetStream(FileMode.Open, FileAccess.Write);
+                stream.Seek(request.Offset, SeekOrigin.Begin);
+                stream.Write(data, 0, data.Length);
+            }
+
             return new WriteResponse { Success = true };
         }
         catch (Exception ex)

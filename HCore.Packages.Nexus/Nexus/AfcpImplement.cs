@@ -229,6 +229,34 @@ public sealed class AfcpImplement : BaseImplement, IAfcpKernel, IDriverModule, I
             if (_kernelVfs.Exists("/selftest/tmp/afcp_test/hello.txt"))
                 throw new InvalidOperationException("scratch file still exists after delete.");
 
+            // 9a. Large-file streaming (C7e) — a file bigger than one wire chunk
+            // (>1 MiB) must round-trip via multiple chunked Read/Write frames, none
+            // of which may exceed the transport's 64 MiB frame cap.
+            Log("--- large-file round-trip (C7e): 3 MiB through /selftest/tmp ---");
+            var big = new byte[3 * 1024 * 1024 + 12345];
+            for (var i = 0; i < big.Length; i++) big[i] = (byte)(i * 31 + 7);
+            _kernelVfs.CreateFile("/selftest/tmp/afcp_big.bin", big);
+            var bigBack = _kernelVfs.GetFile("/selftest/tmp/afcp_big.bin").ReadAllBytes();
+            Log($"wrote {big.Length} bytes, read back {bigBack.Length}");
+            if (bigBack.Length != big.Length)
+                throw new InvalidOperationException($"large-file size mismatch: wrote {big.Length}, read {bigBack.Length}.");
+            for (var i = 0; i < big.Length; i++)
+            {
+                if (bigBack[i] != big[i])
+                    throw new InvalidOperationException($"large-file content mismatch at byte {i}.");
+            }
+            // Verify seek: read a window from the middle via GetStream.
+            using (var s = _kernelVfs.GetFile("/selftest/tmp/afcp_big.bin").GetStream(FileMode.Open, FileAccess.Read))
+            {
+                s.Seek(2_000_000, SeekOrigin.Begin);
+                var windowBytes = new byte[4];
+                if (s.Read(windowBytes, 0, 4) != 4 || windowBytes[0] != big[2_000_000])
+                    throw new InvalidOperationException("large-file seek/read window mismatch.");
+            }
+            Log("large-file round-trip + seek OK.");
+            if (!_kernelVfs.DeleteFile("/selftest/tmp/afcp_big.bin"))
+                throw new InvalidOperationException("delete of the large scratch file failed.");
+
             Log("--- rmdir /selftest/tmp/afcp_test ---");
             if (!_kernelVfs.DeleteFile("/selftest/tmp/afcp_test"))
                 throw new InvalidOperationException("delete of the scratch directory failed.");

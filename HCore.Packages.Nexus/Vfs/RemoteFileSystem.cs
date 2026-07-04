@@ -30,6 +30,14 @@ internal sealed class RemoteFileSystem : IVirtualFileSystem, IDisposable, IRemot
     private readonly AfcpClient _client;
     private readonly Serializer _serializer;
 
+    /// <summary>
+    /// Wire chunk size for streamed reads/writes (§C7e). Kept well under the
+    /// transport's 64 MiB frame cap (<c>FramedTransport.MaxMessageBytes</c>) so a
+    /// single file never rides in one oversized frame; large files stream as a
+    /// sequence of these.
+    /// </summary>
+    internal const int ChunkBytes = 1 * 1024 * 1024;
+
     public string Name => "afcp-remote";
     public bool IsReadOnly => false;
     public string RemoteEndpoint { get; }
@@ -172,12 +180,7 @@ internal sealed class RemoteDirectory : VirtualNode, IVirtualDirectory
     public IVirtualFile CreateFile(string name, bool overwrite = true, ReadOnlySpan<byte> initialData = default)
     {
         var childRemote = ChildRemotePath(_remotePath, name);
-        var res = _client.WriteAsync(childRemote, initialData.ToArray(), overwrite).GetAwaiter().GetResult();
-        if (!res.Success)
-        {
-            throw new IOException(res.Error ?? $"Failed to write '{childRemote}' on the remote peer.");
-        }
-
+        RemoteFile.WriteChunked(_client, childRemote, initialData.ToArray(), overwrite);
         return new RemoteFile(name, this, _client, childRemote);
     }
 
@@ -210,31 +213,31 @@ internal sealed class RemoteFile : VirtualNode, IVirtualFile
         _remotePath = remotePath;
     }
 
-    private byte[] Fetch()
+    private byte[] FetchAll()
     {
-        var res = _client.ReadAsync(_remotePath).GetAwaiter().GetResult();
-        if (res.Error != AfcpErrorCode.None)
-        {
-            throw RemoteError.ToException(res.Error, res.ErrorMessage, Path);
-        }
-        return res.Data ?? Array.Empty<byte>();
+        using var stream = new RemoteReadStream(_client, _remotePath);
+        using var ms = new MemoryStream(stream.Length > 0 && stream.Length <= int.MaxValue ? (int)stream.Length : 0);
+        stream.CopyTo(ms, RemoteFileSystem.ChunkBytes);
+        return ms.ToArray();
     }
 
     public Stream GetStream(FileMode mode = FileMode.Open, FileAccess access = FileAccess.Read)
     {
         if (access == FileAccess.Read)
         {
-            return new MemoryStream(Fetch(), writable: false);
+            // Lazy, seekable, chunk-fetching read stream (§C7e): bounded memory,
+            // one round-trip per ChunkBytes window, so big files never ride one frame.
+            return new RemoteReadStream(_client, _remotePath);
         }
 
         // Append and Open(OrCreate) preserve existing remote content (seeded
         // then overwritten from the start, mirroring a real file handle);
         // Create/CreateNew/Truncate start from an empty buffer. Either way the
-        // whole buffer is sent back as one Write on Dispose.
+        // whole buffer is sent back as chunked Writes on Dispose.
         byte[] initial = Array.Empty<byte>();
         if (mode is FileMode.Append or FileMode.Open or FileMode.OpenOrCreate)
         {
-            try { initial = Fetch(); }
+            try { initial = FetchAll(); }
             catch (FileNotFoundException) { /* nothing to seed; start empty */ }
         }
 
@@ -247,27 +250,55 @@ internal sealed class RemoteFile : VirtualNode, IVirtualFile
         return stream;
     }
 
-    public byte[] ReadAllBytes() => Fetch();
+    public byte[] ReadAllBytes() => FetchAll();
 
     public string ReadString(Encoding? encoding = null)
     {
         encoding ??= Encoding.UTF8;
-        return encoding.GetString(Fetch());
+        return encoding.GetString(FetchAll());
     }
 
     public void Write(ReadOnlySpan<byte> data)
     {
-        var res = _client.WriteAsync(_remotePath, data.ToArray(), overwrite: true).GetAwaiter().GetResult();
-        if (!res.Success)
+        WriteChunked(_client, _remotePath, data.ToArray(), overwrite: true);
+    }
+
+    /// <summary>
+    /// Send <paramref name="data"/> to the remote peer as a sequence of
+    /// <see cref="RemoteFileSystem.ChunkBytes"/>-sized <c>Write</c> requests (§C7e):
+    /// the first chunk creates/overwrites from offset 0 (honouring
+    /// <paramref name="overwrite"/>), each subsequent chunk seeks + writes at its
+    /// offset. A file that fits in one chunk is a single round-trip (unchanged from
+    /// the pre-C7e behaviour). Empty data still sends one chunk, creating an empty file.
+    /// </summary>
+    internal static void WriteChunked(AfcpClient client, string remotePath, byte[] data, bool overwrite)
+    {
+        long offset = 0;
+        do
         {
-            throw new IOException(res.Error ?? $"Failed to write '{Path}' on the remote peer.");
+            var len = (int)Math.Min(RemoteFileSystem.ChunkBytes, data.Length - offset);
+            var chunk = new byte[len];
+            Array.Copy(data, offset, chunk, 0, len);
+
+            // Only the first chunk honours Overwrite; continuation chunks (offset > 0)
+            // are seek+write on the server regardless.
+            var res = client
+                .WriteAsync(remotePath, chunk, overwrite: offset == 0 ? overwrite : true, offset: offset)
+                .GetAwaiter().GetResult();
+            if (!res.Success)
+            {
+                throw new IOException(res.Error ?? $"Failed to write '{remotePath}' on the remote peer.");
+            }
+
+            offset += len;
         }
+        while (offset < data.Length);
     }
 
     /// <summary>
     /// A <see cref="MemoryStream"/> that flushes its full contents to the remote
-    /// peer as a single <see cref="AfcpClient.WriteAsync"/> call on
-    /// <see cref="Dispose(bool)"/> — the mount-side half of AFCP's whole-file
+    /// peer as chunked <see cref="AfcpClient.WriteAsync"/> calls on
+    /// <see cref="Dispose(bool)"/> (§C7e) — the mount-side half of AFCP's
     /// <c>Write</c> verb. Not safe to reuse after disposal (matches
     /// <see cref="MemoryStream"/>'s own contract).
     /// </summary>
@@ -290,15 +321,96 @@ internal sealed class RemoteFile : VirtualNode, IVirtualFile
         {
             if (disposing)
             {
-                var res = _client.WriteAsync(_remotePath, ToArray(), overwrite: true).GetAwaiter().GetResult();
-                if (!res.Success)
-                {
-                    throw new IOException(res.Error ?? $"Failed to write '{_remotePath}' on the remote peer.");
-                }
+                WriteChunked(_client, _remotePath, ToArray(), overwrite: true);
             }
 
             base.Dispose(disposing);
         }
+    }
+
+    /// <summary>
+    /// A read-only, seekable <see cref="Stream"/> backed by chunked AFCP
+    /// <c>Read</c> requests (§C7e). Fetches one <see cref="RemoteFileSystem.ChunkBytes"/>
+    /// window at a time from the peer and caches only that window, so memory stays
+    /// bounded regardless of file size and no single frame exceeds the transport cap.
+    /// The constructor primes the first window, which also surfaces not-found /
+    /// permission errors eagerly (like opening a local file) and learns the total
+    /// <see cref="Length"/>.
+    /// </summary>
+    private sealed class RemoteReadStream : Stream
+    {
+        private readonly AfcpClient _client;
+        private readonly string _remotePath;
+        private long _position;
+        private long _length;
+        private byte[] _chunk = Array.Empty<byte>();
+        private long _chunkStart;
+
+        public RemoteReadStream(AfcpClient client, string remotePath)
+        {
+            _client = client;
+            _remotePath = remotePath;
+            FetchChunk(0);
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override long Length => _length;
+
+        public override long Position
+        {
+            get => _position;
+            set => _position = value < 0 ? throw new IOException("Position cannot be negative.") : value;
+        }
+
+        private void FetchChunk(long start)
+        {
+            var res = _client.ReadAsync(_remotePath, start, RemoteFileSystem.ChunkBytes).GetAwaiter().GetResult();
+            if (res.Error != AfcpErrorCode.None)
+            {
+                throw RemoteError.ToException(res.Error, res.ErrorMessage, _remotePath);
+            }
+            _length = res.TotalLength;
+            _chunk = res.Data ?? Array.Empty<byte>();
+            _chunkStart = start;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (_position >= _length || count == 0) return 0;
+
+            if (_position < _chunkStart || _position >= _chunkStart + _chunk.Length)
+            {
+                FetchChunk(_position);
+                if (_chunk.Length == 0) return 0;
+            }
+
+            var chunkOffset = (int)(_position - _chunkStart);
+            var available = _chunk.Length - chunkOffset;
+            var n = Math.Min(count, available);
+            Array.Copy(_chunk, chunkOffset, buffer, offset, n);
+            _position += n;
+            return n;
+        }
+
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            var target = origin switch
+            {
+                SeekOrigin.Begin => offset,
+                SeekOrigin.Current => _position + offset,
+                SeekOrigin.End => _length + offset,
+                _ => _position,
+            };
+            if (target < 0) throw new IOException("Cannot seek before the start of the stream.");
+            _position = target;
+            return _position;
+        }
+
+        public override void Flush() { }
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException("Remote read stream is read-only.");
     }
 }
 

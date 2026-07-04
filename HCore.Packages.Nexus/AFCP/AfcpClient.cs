@@ -64,17 +64,17 @@ public sealed class AfcpClient : IDisposable
         return RoundTripAsync<SyncRequest, SyncResponse>(MessageType.Sync, req, ct);
     }
 
-    public Task<ReadResponse> ReadAsync(string path, CancellationToken ct = default)
+    public Task<ReadResponse> ReadAsync(string path, long offset = 0, int maxLength = 0, CancellationToken ct = default)
     {
         EnsureConnected();
-        var req = new ReadRequest { Path = path };
+        var req = new ReadRequest { Path = path, Offset = offset, MaxLength = maxLength };
         return RoundTripAsync<ReadRequest, ReadResponse>(MessageType.Read, req, ct);
     }
 
-    public Task<WriteResponse> WriteAsync(string path, byte[] data, bool overwrite = true, CancellationToken ct = default)
+    public Task<WriteResponse> WriteAsync(string path, byte[] data, bool overwrite = true, long offset = 0, CancellationToken ct = default)
     {
         EnsureConnected();
-        var req = new WriteRequest { Path = path, Data = data, Overwrite = overwrite };
+        var req = new WriteRequest { Path = path, Data = data, Overwrite = overwrite, Offset = offset };
         return RoundTripAsync<WriteRequest, WriteResponse>(MessageType.Write, req, ct);
     }
 

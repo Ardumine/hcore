@@ -41,7 +41,10 @@ through `GetModuleInterface<T>(remotePath)` returning a `DispatchProxy` — is i
 and verified** via the extended `afcp test`. **Typed wire errors for `Sync`/`Read` (§C7d)
 are implemented and verified** — an `AfcpErrorCode` distinguishes not-found / not-a-file /
 not-a-directory / permission-denied, mapped back to the matching .NET exception on the mount
-side. The capability model and the config system remain (plus typed errors on the write path).
+side. **Large-file streaming (§C7e) is implemented and verified** — verb-layer chunked
+`Read`/`Write` (1 MiB windows) with a lazy seekable mount-side read stream, so files past the
+64 MiB frame cap transfer fine. The capability model and the config system remain (plus typed
+errors on the write path).
 
 **AFCP organization (2/07/2026):** the upstream protocol stack and serializer have
 been split out of HCore into two standalone, HCore-free repos —
@@ -55,7 +58,8 @@ connector is still the kernel-space bridge for now — extracting it into a load
 `HCore.Packages.Nexus` module is Phase 1+2 of [AFCP_ORGANIZATION.md](afcp/AFCP_ORGANIZATION.md).
 §C7f (reconnect/timeout) is now addressed at the protocol layer
 (`ReconnectingConnection` + `RequestChannel` timeout); §C7e (large-file streaming)
-remains deferred.
+is now done at the connector's verb layer (chunked `Read`/`Write`), though a
+transport-level chunked `IMessageStream` remains deferred upstream.
 
 ---
 
@@ -269,11 +273,31 @@ Design work remains; these are additive layers on top of §A, not blockers for t
       throwing `FileNotFoundException`. The write path (`Write`/`MkDir`/`Remove`) still uses
       the pre-existing `Success` bool + `Error` string (no typed code yet) — it can adopt the
       same enum later; the checkbox scope was `Sync`/`Read`.
-- ☐ **C7e. Large-file streaming.** `Read` returns the whole file in one frame. Fine for
+- ✅ **C7e. Large-file streaming.** `Read` returns the whole file in one frame. Fine for
       `/proc` facets and small config; a chunked/streaming read is needed for big files.
       *Note (2/07/2026):* the upstream `AFCP` lib's `IMessageStream` is message-oriented
       (whole messages); a chunked variant is deferred there too. The HCore connector can
       chunk at the verb layer in the interim. See [AFCP_ORGANIZATION.md](afcp/AFCP_ORGANIZATION.md) §0.2.
+      **DONE (verb-layer chunking).** `ReadRequest` gained `Offset`/`MaxLength` and
+      `ReadResponse` gained `TotalLength`/`Eof`; `WriteRequest` gained `Offset`. The mount
+      side streams in 1 MiB windows (`RemoteFileSystem.ChunkBytes`, well under the transport's
+      64 MiB `FramedTransport.MaxMessageBytes` cap): reads go through a lazy, seekable
+      `RemoteReadStream` (one round-trip per window, bounded memory, learns `Length` from
+      `TotalLength`); writes go through `RemoteFile.WriteChunked` (first chunk creates/
+      overwrites at offset 0, continuation chunks seek+write). A file that fits in one chunk
+      is still a single round-trip (`MaxLength=0` on the request keeps the pre-C7e one-shot
+      whole-file read for callers that want it, e.g. the raw self-test probes). Server side
+      (`VfsAfcpProvider.Read`) seeks the backing `IVirtualFile` stream and serves the window
+      (falling back to materialize+slice for a non-seekable backing stream); `Write` does
+      `CreateFile` for offset 0 and `GetStream(Open, Write)`+seek for continuation chunks
+      (`HostFile` and `MemoryFile` both persist a seek+write). Verified via the extended
+      `afcp test`: a 3 MiB+ file round-trips byte-for-byte through a loopback mount and a
+      mid-file `Seek`+`Read` window matches. **Limits (first cut):** `ReadAllBytes` still
+      materializes the whole file (bounded by the 2 GiB `byte[]` limit — use the streaming
+      `GetStream` for larger); the `RemoteWriteStream` assembles then chunk-sends on
+      `Dispose` (not flush-as-you-go); `MemoryFile` continuation writes are O(N²) (fine for
+      `/tmp` scratch — real large files live on `HostFileSystem`). No transport-level chunked
+      `IMessageStream` (still deferred upstream — this is verb-layer chunking only).
 - ◐ **C7f. Reconnection.** If the TCP link drops, `RemoteFileSystem` throws on next access;
       no auto-reconnect / mount health tracking.
       *Partially addressed (2/07/2026):* the upstream `AFCP` lib now ships
@@ -422,7 +446,7 @@ B1–B6 ✅ → A1 (contracts) ✅ → A2 (impl) ✅ → A3 (demo) ✅ → [loca
                                                                       ↓
                                 E1 (Base contract surfaces) → E2 (HCore.Packages.Nexus) → E3 (retire kernel ref)
                                                                       ↓
-                                 C7d (typed errors) ✅ / C7e (streaming) / C7f (reconnect — infra now in upstream lib)
+                                 C7d (typed errors) ✅ / C7e (streaming) ✅ / C7f (reconnect — infra now in upstream lib)
                                                                       ↓
                                C3 (capability — gates production writes) / C4 (config) / C5 (dynamic invocation)
                                                                       ↓

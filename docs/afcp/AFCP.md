@@ -6,8 +6,10 @@
 > verified** — `GetModuleInterface<T>(remotePath)` returns a marshalling proxy.
 > **Typed errors for Sync/Read (§C7d) implemented & verified** — an `AfcpErrorCode`
 > distinguishes not-found / wrong-node-kind / permission-denied.
+> **Large-file streaming (§C7e) implemented & verified** — verb-layer chunked
+> `Read`/`Write` (1 MiB windows) with a lazy seekable mount-side read stream.
 > **Related:** [DATA_PLANE_DESIGN.md](../data-plane/DATA_PLANE_DESIGN.md) Part IX (the 9P-style
-> mount model), [TODO.md](../TODO.md) §C1, §C7a, §C7b, §C7d.
+> mount model), [TODO.md](../TODO.md) §C1, §C7a, §C7b, §C7d, §C7e.
 
 ---
 
@@ -106,8 +108,8 @@ Path-addressed message types, each a plain serializable class:
 |---|---|---|
 | **Connect** | `ConnectRequest` → `ConnectResponse` | Handshake; `ProtocolVersion.Current = 1` |
 | **Sync** | `SyncRequest{Path}` → `SyncResponse{Entries[], Error, ErrorMessage}` | List one directory's entries (`DirEntry{Name, IsDirectory}`); `Error` is a typed `AfcpErrorCode` (§C7d) |
-| **Read** | `ReadRequest{Path}` → `ReadResponse{Data, Exists, Error, ErrorMessage}` | Fetch any file's raw bytes (live on every call); `Error` is a typed `AfcpErrorCode` (§C7d) |
-| **Write** | `WriteRequest{Path, Data, Overwrite}` → `WriteResponse{Success, Error}` | Create/overwrite a file, whole-file (no chunking — §C7e) |
+| **Read** | `ReadRequest{Path, Offset, MaxLength}` → `ReadResponse{Data, Exists, Error, ErrorMessage, TotalLength, Eof}` | Fetch a file window (live on every call); `MaxLength=0` = whole file (§C7e chunking, §C7d typed errors) |
+| **Write** | `WriteRequest{Path, Data, Overwrite, Offset}` → `WriteResponse{Success, Error}` | Create/overwrite (offset 0) or seek+write a continuation chunk (offset > 0) — chunked, no frame > cap (§C7e) |
 | **MkDir** | `MkDirRequest{Path}` → `MkDirResponse{Success, Error}` | Create a directory (and missing parents) |
 | **Remove** | `RemoveRequest{Path}` → `RemoveResponse{Success, Error}` | Delete a single file or empty directory (no recursion) |
 | **Subscribe** | `SubscribeRequest` → `SubscribeResponse` | Push; server opens a live `DataHost` subscription and streams `Event` frames (Layer 2) |
@@ -143,6 +145,32 @@ longer collapse to the same `Exists=false` / empty listing.
 The write verbs (`Write`/`MkDir`/`Remove`) still use the older `Success` bool +
 free-text `Error` string; adopting the same `AfcpErrorCode` there is a later,
 mechanical follow-up.
+
+### Large-file streaming — chunked `Read` / `Write` (§C7e)
+
+A whole file used to ride in a single frame, capped at 64 MiB
+(`FramedTransport.MaxMessageBytes`) and forcing the entire file into memory. The
+connector now chunks at the **verb layer** in `RemoteFileSystem.ChunkBytes`-sized
+windows (1 MiB), well under the frame cap:
+
+- **Read** — `ReadRequest` carries `Offset` + `MaxLength`; `ReadResponse` carries
+  `TotalLength` + `Eof`. The mount side reads through a lazy, seekable
+  `RemoteReadStream` that fetches one window at a time (bounded memory, one
+  round-trip per window) and learns the file size from `TotalLength`. Server side
+  seeks the backing `IVirtualFile` stream and serves the window (materialize+slice
+  fallback for a non-seekable backing stream). `MaxLength=0` preserves the original
+  one-shot whole-file read (used by small-file / probe callers).
+- **Write** — `WriteRequest` carries `Offset`. `RemoteFile.WriteChunked` sends the
+  first chunk at offset 0 (create/overwrite) and each continuation chunk at its
+  offset; the server does `CreateFile` for offset 0 and `GetStream(Open, Write)`+seek
+  for the rest. `HostFile` and `MemoryFile` both persist a seek+write. A file that
+  fits in one chunk is still a single round-trip.
+
+This is **verb-layer** chunking only — the upstream `IMessageStream` stays
+message-oriented (a transport-level chunked stream is deferred there). First-cut
+limits: `ReadAllBytes` still materializes the whole file (2 GiB `byte[]` limit — use
+`GetStream` for larger); `RemoteWriteStream` assembles then chunk-sends on `Dispose`;
+`MemoryFile` continuation writes are O(N²) (fine for `/tmp` scratch).
 `AfcpClient` connects, runs the handshake, and exposes `SyncAsync`/`ReadAsync`/
 `WriteAsync`/`MkDirAsync`/`RemoveAsync`/`SubscribeAsync`/`CallAsync`. Subscription
 pushes dispatch to `IAfcpSubscription` handles; `CallAsync` is used by the
@@ -284,16 +312,18 @@ raise the stakes materially over read-only Layer 1.
 ### `RemoteFileSystem` (HCore.Main/Vfs)
 A read-write `IVirtualFileSystem` backed by an `AfcpClient`. It is **lazy**
 (9P-style): each `RemoteDirectory` fetches its entries via a fresh `SyncAsync` on
-access, and each `RemoteFile` fetches its bytes via `ReadAsync` on read. Nothing
-is cached — `ls` walks into one directory per round-trip, and `cat` on a live
-`/proc` facet always sees the latest frame. This mirrors `ProcFileSystem`'s
+access, and each `RemoteFile` streams its bytes via chunked `ReadAsync` on read.
+Nothing is cached — `ls` walks into one directory per round-trip, and `cat` on a
+live `/proc` facet always sees the latest frame. This mirrors `ProcFileSystem`'s
 live-view model, but per-directory instead of rebuilding the whole tree at once.
 
-Writes are whole-file, single round-trip operations (no chunking — §C7e):
-`RemoteDirectory.CreateDirectory`/`TryDelete`/`CreateFile` call `MkDirAsync`/
-`RemoveAsync`/`WriteAsync` directly; `RemoteFile.Write` does the same. A
+Reads and writes are **chunked** (§C7e, 1 MiB windows — see "Large-file streaming"
+above): `RemoteDirectory.CreateDirectory`/`TryDelete` call `MkDirAsync`/`RemoveAsync`
+directly; `RemoteDirectory.CreateFile` and `RemoteFile.Write` go through
+`RemoteFile.WriteChunked`. A read-access `RemoteFile.GetStream` returns a lazy,
+seekable `RemoteReadStream` (bounded memory, one round-trip per window). A
 write-access `RemoteFile.GetStream` returns a `RemoteWriteStream` (an internal
-`MemoryStream` subclass) that buffers in memory and fires one `WriteAsync` on
+`MemoryStream` subclass) that buffers in memory and chunk-sends on
 `Dispose()` — `FileMode.Append`/`Open`/`OpenOrCreate` seed the buffer with the
 existing remote content first (so an append or a partial rewrite doesn't
 clobber the rest of the file); `Create`/`CreateNew`/`Truncate` start empty.

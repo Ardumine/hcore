@@ -72,11 +72,15 @@ public sealed class SyncResponse
 public sealed class ReadRequest
 {
     public string Path { get; set; } = string.Empty;
+    /// <summary>Byte offset to start reading from (chunked reads, §C7e). 0 = start of file.</summary>
+    public long Offset { get; set; }
+    /// <summary>Max bytes to return in this chunk; 0 = whole file from <see cref="Offset"/> (back-compat one-shot read).</summary>
+    public int MaxLength { get; set; }
 }
 
 public sealed class ReadResponse
 {
-    /// <summary>The file's raw bytes (the server reads live from its VFS on every request).</summary>
+    /// <summary>The file's raw bytes for the requested window (the server reads live from its VFS on every request).</summary>
     public byte[]? Data { get; set; }
     /// <summary>True if the path exists; false lets the client report "not found".</summary>
     public bool Exists { get; set; }
@@ -84,6 +88,10 @@ public sealed class ReadResponse
     public AfcpErrorCode Error { get; set; } = AfcpErrorCode.None;
     /// <summary>Human-readable detail for <see cref="Error"/>, or null on success.</summary>
     public string? ErrorMessage { get; set; }
+    /// <summary>Total file size in bytes, so a chunked reader knows when it is done (§C7e). Valid when the read succeeded.</summary>
+    public long TotalLength { get; set; }
+    /// <summary>True when this chunk reaches the end of the file (§C7e).</summary>
+    public bool Eof { get; set; }
 }
 
 // --- Write (create/overwrite a file) ---
@@ -93,6 +101,8 @@ public sealed class WriteRequest
     public string Path { get; set; } = string.Empty;
     public byte[]? Data { get; set; }
     public bool Overwrite { get; set; } = true;
+    /// <summary>Byte offset to write this chunk at (chunked writes, §C7e). 0 = create/overwrite from the start (honours <see cref="Overwrite"/>); &gt;0 = seek + write a continuation chunk.</summary>
+    public long Offset { get; set; }
 }
 
 public sealed class WriteResponse
