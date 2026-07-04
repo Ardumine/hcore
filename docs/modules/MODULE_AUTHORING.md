@@ -7,9 +7,11 @@ This guide walks you through creating a new HCore package as a **standalone repo
 A package is its **own repo** and consumes the kernel ABI, `HCore.Modules.Base`, as a **git submodule** ([`ardumine/hcore-modules-base`](https://github.com/Ardumine/hcore-modules-base)). You do **not** need to clone the whole kernel to build a package:
 
 ```
-mypackage/                 ← your package repo
-  HCore.Modules.Base/      ← git submodule (the ABI, pinned to a tag)
-  HCore.Packages.MyPackage/← your class library
+mypackage/                       ← your package repo (project at the root)
+  HCore.Modules.Base/            ← git submodule (the ABI, pinned to a tag)
+  HCore.Packages.MyPackage.csproj
+  ModDescriptor.cs  IMyModule.cs  MyModuleImplement.cs
+  mpd  manifest.json
 ```
 
 > **Pin to a tag.** The ABI's type identity must match the kernel that will load your package. Add the submodule and check out a released tag (e.g. `v1.0.0`) rather than tracking `main`, so your build matches a known kernel.
@@ -34,7 +36,8 @@ cd mypackage
 git submodule add https://github.com/Ardumine/hcore-modules-base.git HCore.Modules.Base
 git -C HCore.Modules.Base checkout v1.0.0
 
-dotnet new classlib -n HCore.Packages.MyPackage --framework net10.0
+# Create the class library at the repo root (-o .):
+dotnet new classlib -n HCore.Packages.MyPackage -o . --framework net10.0
 ```
 
 Consumers of your repo clone with `git clone --recurse-submodules` (or run `git submodule update --init` after cloning) to fetch the ABI.
@@ -53,10 +56,18 @@ Consumers of your repo clone with `git clone --recurse-submodules` (or run `git 
     </PropertyGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\HCore.Modules.Base\HCore.Modules.Base.csproj" />
+        <ProjectReference Include="HCore.Modules.Base\HCore.Modules.Base.csproj" />
         <!-- If your types cross ALC boundaries, also reference Robotics
              (still in the kernel repo — clone hcore/ alongside for now): -->
-        <!-- <ProjectReference Include="..\..\hcore\src\HCore.Modules.Robotics\HCore.Modules.Robotics.csproj" /> -->
+        <!-- <ProjectReference Include="..\hcore\src\HCore.Modules.Robotics\HCore.Modules.Robotics.csproj" /> -->
+    </ItemGroup>
+
+    <!-- The Base submodule lives under this project dir, so its sources would be
+         swept into this package's compile by the default SDK glob — which breaks
+         cross-assembly overrides (e.g. protected internal members). Exclude them: -->
+    <ItemGroup>
+        <Compile Remove="HCore.Modules.Base\**\*.cs" />
+        <None Remove="HCore.Modules.Base\**" />
     </ItemGroup>
 
     <ItemGroup>

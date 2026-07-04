@@ -29,7 +29,8 @@ hcore/
 Packages live in **separate repos** cloned alongside:
 ```
 ardumine/
-  hcore/         ← this repo
+  hcore/                ← this repo
+  hcore-modules-base/   ← HCore.Modules.Base (the ABI; git submodule of hcore + every package)
   hinit/         ← HCore.Packages.HInit
   hshell/        ← HCore.Packages.HShell
   hpm/           ← HCore.Packages.Hpm
@@ -39,8 +40,14 @@ ardumine/
   kaserializer/  ← KASerializer (referenced by nexus)
 ```
 
-Each package references the kernel via peer relative path (`..\hcore\src\...`).
-PostBuild deploys to `../hcore/FS/packs/`.
+`HCore.Modules.Base` (the ABI) is its **own repo**, consumed as a **git submodule** at
+`HCore.Modules.Base/` by the kernel (`src/HCore.Modules.Base`) and by every package repo,
+pinned to a released tag (e.g. `v1.0.0`). Clone with `--recurse-submodules`. Because the
+submodule sits under the project dir, each package `.csproj` must `<Compile Remove>` its
+sources so they resolve from the referenced assembly, not the local glob. `HCore.Modules.Robotics`
+is still in the kernel repo, so packages that use it (Sensor, Nexus) still reference
+`..\hcore\src\HCore.Modules.Robotics\...` and need a kernel clone alongside.
+PostBuild deploys to `../hcore/FS/packs/` (generated, never committed).
 
 ## Architecture (non-obvious)
 
