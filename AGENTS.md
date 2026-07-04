@@ -21,7 +21,6 @@ hcore/
     HCore.Main/              ← kernel (must NEVER reference packages)
     HCore.Modules.Base/      ← shared kernel contracts
     HCore.Modules.Robotics/  ← shared domain contracts (ILidar, ...)
-  HCore.Packages.Nexus/      ← AFCP connector (in-tree scaffolding)
   HCore.Packages.TestDemo/   ← inter-module call demo
   AFCP/                      ← temp in-tree protocol library
   FS/                        ← runtime FS root (generated, not source)
@@ -30,12 +29,14 @@ hcore/
 Packages live in **separate repos** cloned alongside:
 ```
 ardumine/
-  hcore/       ← this repo
-  hinit/       ← HCore.Packages.HInit
-  hshell/      ← HCore.Packages.HShell
-  hpm/         ← HCore.Packages.Hpm
-  hsensors/    ← HCore.Packages.Sensor
-  husb/        ← HCore.Packages.Usb
+  hcore/         ← this repo
+  hinit/         ← HCore.Packages.HInit
+  hshell/        ← HCore.Packages.HShell
+  hpm/           ← HCore.Packages.Hpm
+  hsensors/      ← HCore.Packages.Sensor
+  husb/          ← HCore.Packages.Usb
+  nexus/         ← HCore.Packages.Nexus (AFCP connector)
+  kaserializer/  ← KASerializer (referenced by nexus)
 ```
 
 Each package references the kernel via peer relative path (`..\hcore\src\...`).
@@ -55,7 +56,7 @@ PostBuild deploys to `../hcore/FS/packs/`.
 - **Init / shell split.** `HCore.Packages.HInit` is PID 1, implements `IServiceManager`. Boots `/etc/services/*.svc`, then spawns the interactive console shell and blocks on it.
 - **Bootstrap.** On first boot with empty `FS/packs/`, the kernel runs the embedded bootstrap module (detects missing essential packages, creates FS skeleton, fetches/copies packages, re-scans). On subsequent boots, bootstrap is skipped.
 - **Kernel-service registry.** `ModuleHost.GetModuleInterface<T>` accepts a reserved `@`-prefixed name (e.g. `"@afcp"`) resolving against a separate kernel-service registry, NOT the `/proc` instance table.
-- **AFCP remote data plane.** The `AFCP/` project is a standalone protocol library. Layer 1 (VFS mount), Layer 2 (subscribe-push), and Layer 3 (MKCall proxy) are implemented. Nexus (`HCore.Packages.Nexus`) is the connector module that implements `IAfcpKernel` + `IDriverModule` + `IRemoteMountHook`.
+- **AFCP remote data plane.** The `AFCP/` project is a standalone protocol library. Layer 1 (VFS mount), Layer 2 (subscribe-push), and Layer 3 (MKCall proxy) are implemented, plus typed wire errors (C7d) and chunked large-file streaming (C7e). Nexus is the connector module that implements `IAfcpKernel` + `IDriverModule` + `IRemoteMountHook`; it now lives in its **own repo** (`ardumine/nexus`, cloned alongside as `../nexus`, referencing `../hcore/src` + `../kaserializer`) and deploys to `FS/packs/HCore.Packages.Nexus/`. The AFCP protocol/transport is bundled inside that repo (the upstream-lib swap, E2.1, is still pending).
 
 ## Key gotchas
 

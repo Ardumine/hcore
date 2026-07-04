@@ -368,6 +368,19 @@ abstraction, the connector is a driver — like a filesystem module in Linux).
       removed `IRemoteDataSource` inline check from `DataHost.Subscribe<T>`.
       The kernel's `ModuleHost`/`DataHost` now go exclusively through the
       `IRemoteMountHook` for remote paths.
+- ✅ **E4. Extract Nexus to its own repo** — moved `HCore.Packages.Nexus/` out of the
+      monorepo into standalone [`github.com/Ardumine/nexus`](https://github.com/Ardumine/nexus)
+      (cloned alongside as `../nexus`), referencing `..\hcore\src\HCore.Modules.Base` +
+      `..\hcore\src\HCore.Modules.Robotics` + `..\kaserializer\src\KASerializer` (peer layout,
+      like the other package repos). Added `manifest.json` + `mpd` + PostBuild deploy to
+      `../hcore/FS/packs/HCore.Packages.Nexus/`. Removed the project from `hcore.sln` and
+      deleted the in-tree source; `dotnet build hcore.sln` + the `afcp test` self-test (all
+      layers + C7d + C7e) still pass against the deployed build. The bundled AFCP
+      transport travelled with the repo (E2.1 upstream-lib swap still deferred). **Follow-up:**
+      the kernel spawns Nexus unconditionally in `Program.Main`, and bootstrap does not yet
+      fetch `nexus` on a fresh clone (only hinit/hshell/hpm are essential-fetched) — the
+      committed `FS/packs/HCore.Packages.Nexus/` deploy covers existing/fresh clones for now;
+      adding `nexus` to the bootstrap map (or making the spawn resilient) is a loose end.
 
 **Sequencing:** E1 ∥ nothing (can start immediately, no upstream dependency).
 E2 needs E1. E3 after E2's self-test passes. E0 is done and is a prerequisite for

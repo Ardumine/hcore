@@ -21,12 +21,14 @@ Packages live in **separate repos** cloned alongside:
 
 ```
 ardumine/
-  hcore/       ← kernel
-  hinit/       ← HCore.Packages.HInit (PID 1)
-  hshell/      ← HCore.Packages.HShell (interactive shell)
-  hpm/         ← HCore.Packages.Hpm (package manager)
-  hsensors/    ← HCore.Packages.Sensor (LIDAR + SLAM)
-  husb/        ← HCore.Packages.Usb (USB demo)
+  hcore/         ← kernel
+  hinit/         ← HCore.Packages.HInit (PID 1)
+  hshell/        ← HCore.Packages.HShell (interactive shell)
+  hpm/           ← HCore.Packages.Hpm (package manager)
+  hsensors/      ← HCore.Packages.Sensor (LIDAR + SLAM)
+  husb/          ← HCore.Packages.Usb (USB demo)
+  nexus/         ← HCore.Packages.Nexus (AFCP connector)
+  kaserializer/  ← KASerializer (referenced by nexus)
 ```
 
 Each package repo references the kernel via a peer relative path and deploys its build output to `hcore/FS/packs/` via PostBuild.
