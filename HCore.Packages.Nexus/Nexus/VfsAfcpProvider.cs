@@ -80,9 +80,13 @@ internal sealed class VfsAfcpProvider : IAfcpProvider
                 entries.Add(new DirEntry { Name = name, IsDirectory = isDir });
             }
         }
-        catch (DirectoryNotFoundException)
+        catch (Exception ex)
         {
-            // Return an empty listing for a missing dir — the client sees an empty dir.
+            // Typed failure (C7d): a missing directory, a path that is actually a
+            // file ("not a directory"), and a permission error used to all collapse
+            // to an empty listing. Classify so the mount side can tell them apart.
+            var (code, message) = ClassifyDirectoryError(ex, path);
+            return new SyncResponse { Entries = Array.Empty<DirEntry>(), Error = code, ErrorMessage = message };
         }
 
         return new SyncResponse { Entries = entries.ToArray() };
@@ -95,10 +99,58 @@ internal sealed class VfsAfcpProvider : IAfcpProvider
             var bytes = _vfs.GetFile(request.Path).ReadAllBytes();
             return new ReadResponse { Data = bytes, Exists = true };
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return new ReadResponse { Data = null, Exists = false };
+            // Typed failure (C7d): distinguish not-found / not-a-file (the path is a
+            // directory) / permission-denied instead of a bare Exists=false.
+            var (code, message) = ClassifyFileError(ex, request.Path);
+            return new ReadResponse { Data = null, Exists = false, Error = code, ErrorMessage = message };
         }
+    }
+
+    /// <summary>
+    /// Classify a <see cref="Read"/> failure into a typed <see cref="AfcpErrorCode"/>.
+    /// A read that fails because the path is actually a directory reports
+    /// <see cref="AfcpErrorCode.NotAFile"/> (probed via <see cref="IKernelVfs.Exists"/>),
+    /// distinguishing it from a genuinely missing path.
+    /// </summary>
+    private (AfcpErrorCode Code, string Message) ClassifyFileError(Exception ex, string path)
+    {
+        if (ex is UnauthorizedAccessException)
+            return (AfcpErrorCode.PermissionDenied, ex.Message);
+
+        if (ex is FileNotFoundException or DirectoryNotFoundException)
+            return ProbeExists(path)
+                ? (AfcpErrorCode.NotAFile, $"'{path}' is not a file.")
+                : (AfcpErrorCode.NotFound, ex.Message);
+
+        return (AfcpErrorCode.Internal, ex.Message);
+    }
+
+    /// <summary>
+    /// Classify a <see cref="Sync"/> failure into a typed <see cref="AfcpErrorCode"/>.
+    /// A listing that fails because the path is actually a file reports
+    /// <see cref="AfcpErrorCode.NotADirectory"/> (probed via <see cref="IKernelVfs.Exists"/>),
+    /// distinguishing it from a genuinely missing path.
+    /// </summary>
+    private (AfcpErrorCode Code, string Message) ClassifyDirectoryError(Exception ex, string path)
+    {
+        if (ex is UnauthorizedAccessException)
+            return (AfcpErrorCode.PermissionDenied, ex.Message);
+
+        if (ex is DirectoryNotFoundException or FileNotFoundException)
+            return ProbeExists(path)
+                ? (AfcpErrorCode.NotADirectory, $"'{path}' is not a directory.")
+                : (AfcpErrorCode.NotFound, ex.Message);
+
+        return (AfcpErrorCode.Internal, ex.Message);
+    }
+
+    /// <summary>Best-effort existence probe — never throws (a broken mount reports "does not exist").</summary>
+    private bool ProbeExists(string path)
+    {
+        try { return _vfs.Exists(path); }
+        catch { return false; }
     }
 
     public WriteResponse Write(WriteRequest request)

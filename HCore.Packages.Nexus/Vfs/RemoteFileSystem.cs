@@ -61,6 +61,27 @@ internal sealed class RemoteFileSystem : IVirtualFileSystem, IDisposable, IRemot
 }
 
 /// <summary>
+/// Maps a wire-level <see cref="AfcpErrorCode"/> (TODO.md §C7d) back to the .NET
+/// exception a local VFS would have thrown, so remote failures are indistinguishable
+/// from local ones to user space: a missing remote file throws
+/// <see cref="FileNotFoundException"/>, a permission refusal throws
+/// <see cref="UnauthorizedAccessException"/>, and a type mismatch (file vs directory)
+/// throws <see cref="IOException"/>.
+/// </summary>
+internal static class RemoteError
+{
+    public static Exception ToException(AfcpErrorCode code, string? message, string path) => code switch
+    {
+        AfcpErrorCode.NotFound => new FileNotFoundException(message ?? $"'{path}' not found on the remote peer.", path),
+        AfcpErrorCode.NotADirectory => new IOException(message ?? $"'{path}' is not a directory on the remote peer."),
+        AfcpErrorCode.NotAFile => new IOException(message ?? $"'{path}' is not a file on the remote peer."),
+        AfcpErrorCode.PermissionDenied => new UnauthorizedAccessException(message ?? $"Access to '{path}' was denied by the remote peer."),
+        AfcpErrorCode.ReadOnly => new IOException(message ?? $"'{path}' is on a read-only remote filesystem."),
+        _ => new IOException(message ?? $"Remote operation on '{path}' failed."),
+    };
+}
+
+/// <summary>
 /// A lazy directory backed by a remote AFCP <see cref="SyncAsync"/>. Every
 /// enumeration/lookup does a fresh round-trip so newly-spawned remote instances
 /// appear immediately — matching <see cref="ProcFileSystem"/>'s live-view model.
@@ -80,6 +101,17 @@ internal sealed class RemoteDirectory : VirtualNode, IVirtualDirectory
     private DirEntry[] Fetch()
     {
         var res = _client.SyncAsync(_remotePath).GetAwaiter().GetResult();
+        if (res.Error == AfcpErrorCode.NotFound)
+        {
+            // A missing directory looks empty — preserves kernel path traversal
+            // (TryGet* returns null on an absent child rather than throwing), the
+            // same as the pre-C7d empty-listing behaviour. Harder errors below.
+            return Array.Empty<DirEntry>();
+        }
+        if (res.Error != AfcpErrorCode.None)
+        {
+            throw RemoteError.ToException(res.Error, res.ErrorMessage, Path);
+        }
         return res.Entries;
     }
 
@@ -181,7 +213,11 @@ internal sealed class RemoteFile : VirtualNode, IVirtualFile
     private byte[] Fetch()
     {
         var res = _client.ReadAsync(_remotePath).GetAwaiter().GetResult();
-        return res.Exists ? (res.Data ?? Array.Empty<byte>()) : throw new FileNotFoundException($"File '{Path}' not found on the remote peer.");
+        if (res.Error != AfcpErrorCode.None)
+        {
+            throw RemoteError.ToException(res.Error, res.ErrorMessage, Path);
+        }
+        return res.Data ?? Array.Empty<byte>();
     }
 
     public Stream GetStream(FileMode mode = FileMode.Open, FileAccess access = FileAccess.Read)

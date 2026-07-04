@@ -38,8 +38,10 @@ remote `Data.Subscribe<T>` over a mount — is implemented and verified** via th
 `afcp test` (raw-client push + the `RemoteSlam` demo consumer over a loopback mount +
 `ProducerKilled` on kill). **AFCP Layer 3 (MKCall proxy, §C7c) — remote method calls
 through `GetModuleInterface<T>(remotePath)` returning a `DispatchProxy` — is implemented
-and verified** via the extended `afcp test`. The capability model, the config system,
-and typed wire errors remain.
+and verified** via the extended `afcp test`. **Typed wire errors for `Sync`/`Read` (§C7d)
+are implemented and verified** — an `AfcpErrorCode` distinguishes not-found / not-a-file /
+not-a-directory / permission-denied, mapped back to the matching .NET exception on the mount
+side. The capability model and the config system remain (plus typed errors on the write path).
 
 **AFCP organization (2/07/2026):** the upstream protocol stack and serializer have
 been split out of HCore into two standalone, HCore-free repos —
@@ -243,9 +245,30 @@ Design work remains; these are additive layers on top of §A, not blockers for t
       the same class of bug as the zero-length unmanaged array fast path fixed in C7a. Never
       surfaced before because existing messages used `null` (handled by the null-wrapper), never
       `""`; `CallResponse.Error` defaults to `""`. Fixed in `AFCP/Serializer/Serializers/StringSerializer.cs`.
-- ☐ **C7d. Typed errors over the wire.** A missing file, a permission error, and a
+- ✅ **C7d. Typed errors over the wire.** A missing file, a permission error, and a
       "not a directory" all collapse to `Exists=false` / empty listing. No error response
       type for `Sync`/`Read` — add one so failures are distinguishable.
+      **DONE (Sync/Read).** Added an `AfcpErrorCode` enum (`None`/`NotFound`/`NotADirectory`/
+      `NotAFile`/`PermissionDenied`/`ReadOnly`/`Internal`, one-byte enum on the wire) plus
+      `Error` + `ErrorMessage` fields on `SyncResponse`/`ReadResponse`
+      (`AFCP/Protocol/Messages.cs`). Server side (`VfsAfcpProvider.Sync`/`Read`) classifies
+      the kernel-VFS exception: `UnauthorizedAccessException`→`PermissionDenied`;
+      `FileNotFoundException`/`DirectoryNotFoundException` split into `NotFound` vs
+      `NotAFile`/`NotADirectory` via an `IKernelVfs.Exists` probe (the path exists but is the
+      wrong node kind); anything else→`Internal`. Mount side (`RemoteFileSystem`) maps the
+      code back to the .NET exception a local VFS would have thrown — `RemoteError.ToException`:
+      `NotFound`→`FileNotFoundException`, `PermissionDenied`→`UnauthorizedAccessException`,
+      `NotAFile`/`NotADirectory`/`ReadOnly`/`Internal`→`IOException` — so remote failures are
+      indistinguishable from local ones to user space. **One deliberate exception:** a `Sync`
+      returning `NotFound` maps to an *empty listing* on the mount side, not a throw, so kernel
+      path traversal (`TryGet*` returning null on an absent child) keeps working exactly as
+      before — only harder errors (permission, wrong node kind) propagate. Verified via the
+      extended `afcp test`: a raw client asserts `Read /no/such/file`→`NotFound`,
+      `Read /proc`→`NotAFile`, `Sync /no/such/dir`→`NotFound`,
+      `Sync /proc/lidar/scan_data`→`NotADirectory`, plus a mount-side `cat` of a missing file
+      throwing `FileNotFoundException`. The write path (`Write`/`MkDir`/`Remove`) still uses
+      the pre-existing `Success` bool + `Error` string (no typed code yet) — it can adopt the
+      same enum later; the checkbox scope was `Sync`/`Read`.
 - ☐ **C7e. Large-file streaming.** `Read` returns the whole file in one frame. Fine for
       `/proc` facets and small config; a chunked/streaming read is needed for big files.
       *Note (2/07/2026):* the upstream `AFCP` lib's `IMessageStream` is message-oriented
@@ -399,7 +422,7 @@ B1–B6 ✅ → A1 (contracts) ✅ → A2 (impl) ✅ → A3 (demo) ✅ → [loca
                                                                       ↓
                                 E1 (Base contract surfaces) → E2 (HCore.Packages.Nexus) → E3 (retire kernel ref)
                                                                       ↓
-                                C7d (typed errors) / C7e (streaming) / C7f (reconnect — infra now in upstream lib)
+                                 C7d (typed errors) ✅ / C7e (streaming) / C7f (reconnect — infra now in upstream lib)
                                                                       ↓
                                C3 (capability — gates production writes) / C4 (config) / C5 (dynamic invocation)
                                                                       ↓

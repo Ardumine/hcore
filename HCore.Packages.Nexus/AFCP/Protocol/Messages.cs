@@ -1,5 +1,32 @@
 namespace AFCP.Protocol;
 
+/// <summary>
+/// A typed failure code carried by fallible responses (<see cref="SyncResponse"/>,
+/// <see cref="ReadResponse"/>) so a peer can distinguish "not found" from
+/// "permission denied" from "not a directory" — previously these all collapsed to
+/// <c>Exists=false</c> / an empty listing (TODO.md §C7d). The serving peer maps its
+/// local VFS exception to one of these; the mounting peer maps the code back to a
+/// specific .NET exception (see <c>RemoteFileSystem</c>). <see cref="None"/> means
+/// success. Serializes as a single byte (enum fast path).
+/// </summary>
+public enum AfcpErrorCode : byte
+{
+    /// <summary>No error — the operation succeeded.</summary>
+    None = 0,
+    /// <summary>The path does not exist.</summary>
+    NotFound = 1,
+    /// <summary>A directory operation targeted a path that exists but is a file.</summary>
+    NotADirectory = 2,
+    /// <summary>A file operation targeted a path that exists but is a directory.</summary>
+    NotAFile = 3,
+    /// <summary>The serving peer refused access (no capability model yet — reserved for a real ACL).</summary>
+    PermissionDenied = 4,
+    /// <summary>The target filesystem is read-only.</summary>
+    ReadOnly = 5,
+    /// <summary>Anything else — an unclassified server-side failure (message carries detail).</summary>
+    Internal = 99,
+}
+
 // --- Connect (handshake) ---
 
 public sealed class ConnectRequest
@@ -34,6 +61,10 @@ public sealed class DirEntry
 public sealed class SyncResponse
 {
     public DirEntry[] Entries { get; set; } = Array.Empty<DirEntry>();
+    /// <summary>Failure code; <see cref="AfcpErrorCode.None"/> when the listing succeeded. A missing directory reports <see cref="AfcpErrorCode.NotFound"/> (the mount side treats that as an empty listing to preserve path traversal).</summary>
+    public AfcpErrorCode Error { get; set; } = AfcpErrorCode.None;
+    /// <summary>Human-readable detail for <see cref="Error"/>, or null on success.</summary>
+    public string? ErrorMessage { get; set; }
 }
 
 // --- Read (file contents / facet snapshot) ---
@@ -49,6 +80,10 @@ public sealed class ReadResponse
     public byte[]? Data { get; set; }
     /// <summary>True if the path exists; false lets the client report "not found".</summary>
     public bool Exists { get; set; }
+    /// <summary>Failure code; <see cref="AfcpErrorCode.None"/> when the read succeeded. Lets the mount side distinguish not-found / not-a-file / permission-denied instead of a bare <see cref="Exists"/>=false.</summary>
+    public AfcpErrorCode Error { get; set; } = AfcpErrorCode.None;
+    /// <summary>Human-readable detail for <see cref="Error"/>, or null on success.</summary>
+    public string? ErrorMessage { get; set; }
 }
 
 // --- Write (create/overwrite a file) ---

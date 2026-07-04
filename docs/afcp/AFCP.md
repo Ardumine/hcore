@@ -4,8 +4,10 @@
 > VFS writes (Write/MkDir/Remove, §C7a) **and Layer 2 (subscribe-push over the wire,
 > §C7b) implemented & verified**. **Layer 3 (MKCall proxy, §C7c) implemented &
 > verified** — `GetModuleInterface<T>(remotePath)` returns a marshalling proxy.
+> **Typed errors for Sync/Read (§C7d) implemented & verified** — an `AfcpErrorCode`
+> distinguishes not-found / wrong-node-kind / permission-denied.
 > **Related:** [DATA_PLANE_DESIGN.md](../data-plane/DATA_PLANE_DESIGN.md) Part IX (the 9P-style
-> mount model), [TODO.md](../TODO.md) §C1, §C7a, §C7b.
+> mount model), [TODO.md](../TODO.md) §C1, §C7a, §C7b, §C7d.
 
 ---
 
@@ -103,8 +105,8 @@ Path-addressed message types, each a plain serializable class:
 | Verb | Request → Response | Notes |
 |---|---|---|
 | **Connect** | `ConnectRequest` → `ConnectResponse` | Handshake; `ProtocolVersion.Current = 1` |
-| **Sync** | `SyncRequest{Path}` → `SyncResponse{Entries[]}` | List one directory's entries (`DirEntry{Name, IsDirectory}`) |
-| **Read** | `ReadRequest{Path}` → `ReadResponse{Data, Exists}` | Fetch any file's raw bytes (live on every call) |
+| **Sync** | `SyncRequest{Path}` → `SyncResponse{Entries[], Error, ErrorMessage}` | List one directory's entries (`DirEntry{Name, IsDirectory}`); `Error` is a typed `AfcpErrorCode` (§C7d) |
+| **Read** | `ReadRequest{Path}` → `ReadResponse{Data, Exists, Error, ErrorMessage}` | Fetch any file's raw bytes (live on every call); `Error` is a typed `AfcpErrorCode` (§C7d) |
 | **Write** | `WriteRequest{Path, Data, Overwrite}` → `WriteResponse{Success, Error}` | Create/overwrite a file, whole-file (no chunking — §C7e) |
 | **MkDir** | `MkDirRequest{Path}` → `MkDirResponse{Success, Error}` | Create a directory (and missing parents) |
 | **Remove** | `RemoveRequest{Path}` → `RemoveResponse{Success, Error}` | Delete a single file or empty directory (no recursion) |
@@ -115,6 +117,32 @@ Path-addressed message types, each a plain serializable class:
 
 `AfcpServer` accepts connections, runs a `PeerSession` per peer, dispatches
 requests to an `IAfcpProvider` (the host's backing implementation).
+
+### Typed errors — `Sync` / `Read` (§C7d)
+
+`SyncResponse` and `ReadResponse` carry an `AfcpErrorCode` (`None`, `NotFound`,
+`NotADirectory`, `NotAFile`, `PermissionDenied`, `ReadOnly`, `Internal`) plus a
+human-readable `ErrorMessage`, so a missing path, a permission refusal, and a
+node-kind mismatch (a file where a directory was expected, or vice versa) no
+longer collapse to the same `Exists=false` / empty listing.
+
+- **Server** (`VfsAfcpProvider`) classifies the kernel-VFS exception:
+  `UnauthorizedAccessException`→`PermissionDenied`; a `FileNotFoundException` /
+  `DirectoryNotFoundException` is split into `NotFound` vs `NotAFile`/`NotADirectory`
+  by probing `IKernelVfs.Exists` (the path is present but the wrong kind); anything
+  else→`Internal`. The `AfcpErrorCode` serializes as a single byte (enum fast path).
+- **Mount side** (`RemoteFileSystem` → `RemoteError.ToException`) maps the code back
+  to the .NET exception a local VFS would have thrown — `NotFound`→`FileNotFoundException`,
+  `PermissionDenied`→`UnauthorizedAccessException`, the rest→`IOException` — so remote
+  failures look identical to local ones to user space.
+- **One deliberate asymmetry:** a `Sync` that returns `NotFound` becomes an *empty
+  listing* on the mount side (not a throw), preserving kernel path traversal
+  (`TryGet*` returning null on an absent child). Only harder errors propagate as
+  exceptions.
+
+The write verbs (`Write`/`MkDir`/`Remove`) still use the older `Success` bool +
+free-text `Error` string; adopting the same `AfcpErrorCode` there is a later,
+mechanical follow-up.
 `AfcpClient` connects, runs the handshake, and exposes `SyncAsync`/`ReadAsync`/
 `WriteAsync`/`MkDirAsync`/`RemoveAsync`/`SubscribeAsync`/`CallAsync`. Subscription
 pushes dispatch to `IAfcpSubscription` handles; `CallAsync` is used by the
@@ -211,7 +239,9 @@ Implements `IAfcpProvider` as a **generic VFS proxy** over the kernel `FileSyste
 - **Read** — returns any file's raw bytes via `FileSystem.GetFile(path).ReadAllBytes()`.
   Because `/proc` is a live `ProcFileSystem` mount inside the kernel VFS, a facet
   file (`/proc/lidar/scan_data`) is rebuilt fresh on every read — the liveness is
-  handled server-side for free, with **no facet-specific protocol**.
+  handled server-side for free, with **no facet-specific protocol**. A failed read
+  is classified into a typed `AfcpErrorCode` (§C7d, see "Typed errors" above) instead
+  of a bare `Exists=false`.
 - **Write** / **MkDir** / **Remove** — delegate straight to `FileSystem.CreateFile`/
   `FileSystem.MkDir`/`FileSystem.DeleteFile` (the same kernel API a local `mv`/
   `mkdir`/`rm` uses), wrapped in a try/catch that reports failure as

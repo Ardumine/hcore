@@ -233,6 +233,52 @@ public sealed class AfcpImplement : BaseImplement, IAfcpKernel, IDriverModule, I
             if (!_kernelVfs.DeleteFile("/selftest/tmp/afcp_test"))
                 throw new InvalidOperationException("delete of the scratch directory failed.");
 
+            // 9b. Typed errors over the wire (C7d) — raw client, direct Read/Sync.
+            // The kernel VFS short-circuits a missing file at the listing level, so
+            // exercise the Read/Sync error surface directly against the server.
+            Log("--- typed errors (C7d): raw Read/Sync error codes ---");
+            var errProbe = new AfcpClient(_serializer);
+            try
+            {
+                errProbe.ConnectAsync(new IPEndPoint(IPAddress.Loopback, port), "selftest-errprobe").GetAwaiter().GetResult();
+
+                var missingRead = errProbe.ReadAsync("/no/such/file.txt").GetAwaiter().GetResult();
+                Log($"Read /no/such/file.txt -> Error={missingRead.Error}");
+                if (missingRead.Error != AFCP.Protocol.AfcpErrorCode.NotFound)
+                    throw new InvalidOperationException($"expected NotFound reading a missing file, got {missingRead.Error}.");
+
+                var dirRead = errProbe.ReadAsync("/proc").GetAwaiter().GetResult();
+                Log($"Read /proc (a directory) -> Error={dirRead.Error}");
+                if (dirRead.Error != AFCP.Protocol.AfcpErrorCode.NotAFile)
+                    throw new InvalidOperationException($"expected NotAFile reading a directory, got {dirRead.Error}.");
+
+                var missingSync = errProbe.SyncAsync("/no/such/dir").GetAwaiter().GetResult();
+                Log($"Sync /no/such/dir -> Error={missingSync.Error}");
+                if (missingSync.Error != AFCP.Protocol.AfcpErrorCode.NotFound)
+                    throw new InvalidOperationException($"expected NotFound listing a missing dir, got {missingSync.Error}.");
+
+                var fileSync = errProbe.SyncAsync("/proc/lidar/scan_data").GetAwaiter().GetResult();
+                Log($"Sync /proc/lidar/scan_data (a file) -> Error={fileSync.Error}");
+                if (fileSync.Error != AFCP.Protocol.AfcpErrorCode.NotADirectory)
+                    throw new InvalidOperationException($"expected NotADirectory listing a file, got {fileSync.Error}.");
+            }
+            finally
+            {
+                errProbe.Dispose();
+            }
+
+            // Mount side maps NotFound -> FileNotFoundException transparently.
+            Log("--- typed errors (C7d): cat a missing file over the mount ---");
+            try
+            {
+                _kernelVfs.GetFile("/selftest/tmp/gone.txt").ReadString();
+                throw new InvalidOperationException("expected reading a missing remote file to throw.");
+            }
+            catch (FileNotFoundException)
+            {
+                Log("correctly threw FileNotFoundException.");
+            }
+
             // 10. Subscribe-push (Layer 2) — raw client
             Log("--- subscribe /proc/lidar/scan_data (raw client) ---");
             var seqs = new List<long>();
