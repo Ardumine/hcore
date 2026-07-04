@@ -24,6 +24,17 @@ public interface IVfsKernel : IModule
     bool Unmount(string mountPoint);
 
     /// <summary>
+    /// Construct a kernel-backed filesystem of <paramref name="fsType"/> and mount
+    /// it at <paramref name="mountPoint"/>. Lets user-space modules (e.g. the fstab
+    /// mounter) mount without referencing kernel-internal filesystem types.
+    /// <para>Supported <paramref name="fsType"/> values (case-insensitive):
+    /// <c>hostfs</c> (<paramref name="source"/> = host directory path),
+    /// <c>memfs</c>/<c>tmpfs</c> (<paramref name="source"/> = optional volume name),
+    /// <c>devfs</c>.</para>
+    /// </summary>
+    bool MountByType(string mountPoint, string fsType, string? source = null, bool readOnly = false, bool replaceExisting = false);
+
+    /// <summary>
     /// Resolve <paramref name="path"/> to the backing <see cref="IVirtualFileSystem"/>
     /// and the path as that filesystem sees it (mount prefix stripped).
     /// Returns <c>false</c> instead of throwing when no mount covers the path.

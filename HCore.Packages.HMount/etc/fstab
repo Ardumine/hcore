@@ -1,0 +1,16 @@
+# /etc/fstab — filesystems mounted at boot by HCore.Packages.HMount (the fstab
+# service). One entry per line, whitespace-separated:
+#
+#   <source>        <mountpoint>   <type>    <options>
+#
+# type    : hostfs (source = host dir) | memfs/tmpfs (source = volume name)
+#           | devfs | nexus (remote peer over AFCP; source = host:port)
+# source  : host path for hostfs; host:port for nexus; '-' or 'none' otherwise
+# options : comma-separated — ro | rw | replace
+#
+# Base mounts (/, /dev, /tmp, /proc) are set up by the kernel before this runs;
+# list only EXTRA filesystems here. Examples (commented out — edit to taste):
+
+# -               /scratch       memfs     rw
+# /srv/shared     /shared        hostfs    ro
+# peer.local:9000 /other         nexus     rw

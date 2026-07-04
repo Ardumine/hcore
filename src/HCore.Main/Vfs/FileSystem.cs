@@ -535,6 +535,35 @@ public sealed class FileSystem : IVfsKernel, IKernelVfs
             .Select(m => m.Segments[^1]);
     }
 
+    /// <summary>
+    /// Construct a kernel-backed filesystem of <paramref name="fsType"/> and mount it.
+    /// Central factory so privileged modules can mount by type name without a
+    /// reference to the kernel's concrete filesystem implementations.
+    /// </summary>
+    public bool MountByType(string mountPoint, string fsType, string? source = null, bool readOnly = false, bool replaceExisting = false)
+    {
+        if (string.IsNullOrWhiteSpace(fsType))
+        {
+            throw new ArgumentException("Filesystem type cannot be empty.", nameof(fsType));
+        }
+
+        IVirtualFileSystem fileSystem = fsType.Trim().ToLowerInvariant() switch
+        {
+            "hostfs" or "host" or "bind" => new HostFileSystem(
+                string.IsNullOrWhiteSpace(source)
+                    ? throw new ArgumentException("hostfs requires a source host path.", nameof(source))
+                    : source,
+                name: null,
+                isReadOnly: readOnly),
+            "memfs" or "mem" or "tmpfs" => new MemoryFileSystem(string.IsNullOrWhiteSpace(source) ? "memfs" : source!),
+            "devfs" or "dev" => new DeviceFileSystem(),
+            _ => throw new ArgumentException($"Unknown filesystem type '{fsType}'.", nameof(fsType)),
+        };
+
+        Mount(mountPoint, fileSystem, replaceExisting);
+        return true;
+    }
+
     void IVfsKernel.Mount(string mountPoint, IVirtualFileSystem fs) => Mount(mountPoint, fs);
     IEnumerable<string> IVfsKernel.ListDirectory(string path) => ListDirectory(path);
     IVirtualFile IVfsKernel.GetFile(string path) => GetFile(path);

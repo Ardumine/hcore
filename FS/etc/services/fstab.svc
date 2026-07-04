@@ -1,0 +1,4 @@
+# fstab.svc — mount the filesystems listed in /etc/fstab at boot.
+# Convention: the service's primary instance must be named after the service.
+spawn HCore.Packages.HMount.Mount fstab
+run fstab
